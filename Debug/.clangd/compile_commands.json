@@ -1,0 +1,57 @@
+[
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/empty.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/encoder.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/line_follow.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/motor.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/pid.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/sensor.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug/ti_msp_dl_config.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/delay.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/imu601.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/oled.c"
+   },
+   {
+      "directory" : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26\" -I\"E:/DIANSAI resources/26DIANSAI/DIANSAI_26/Debug\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source/third_party/CMSIS/Core/Include\" -I\"D:/TMX_ENVSET/mspm0_sdk_2_11_00_07/source\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/armv7em-ti-none-eabihf/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c++/v1\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/lib/clang/18/include\" -isystem\"D:/TMX_ENVSET/ccs/tools/compiler/ti-cgt-armllvm_4.0.4.LTS/include/c\" -xc",
+      "file"      : "E:/DIANSAI resources/26DIANSAI/DIANSAI_26/uart.c"
+   }
+]

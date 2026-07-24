@@ -1,0 +1,36 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "DIANSAI_26",
+            "type": "ccs-debug",
+            "request": "launch",
+            "projectInfo": {
+                "name": "DIANSAI_26",
+                "resourceId": "/DIANSAI_26"
+            }
+        },
+        {
+            "name": "DIANSAI_26 (1)",
+            "type": "ccs-debug",
+            "request": "launch",
+            "projectInfo": {
+                "name": "DIANSAI_26",
+                "resourceId": "/DIANSAI_26/__ccs_2_generatedBinaries"
+            },
+            "connections": [
+                {
+                    "name": "Texas Instruments XDS110 USB Debug Probe",
+                    "cores": [
+                        {
+                            "name": "CORTEX_M0P",
+                            "debuggerSettings": {
+                                "data": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>\n<PropertyValues/>\n"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
