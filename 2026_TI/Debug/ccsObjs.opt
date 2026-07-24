@@ -1,4 +1,5 @@
 "./atk_mw1278d.o"
+"./delay.o"
 "./demo_lora.o"
 "./empty.o"
 "./ti_msp_dl_config.o"

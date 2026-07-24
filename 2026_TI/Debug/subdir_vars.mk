@@ -10,6 +10,7 @@ SYSCFG_SRCS += \
 
 C_SRCS += \
 ../atk_mw1278d.c \
+../delay.c \
 ../demo_lora.c \
 ../empty.c \
 ./ti_msp_dl_config.c \
@@ -27,6 +28,7 @@ GEN_FILES += \
 
 C_DEPS += \
 ./atk_mw1278d.d \
+./delay.d \
 ./demo_lora.d \
 ./empty.d \
 ./ti_msp_dl_config.d \
@@ -39,6 +41,7 @@ GEN_OPTS += \
 
 OBJS += \
 ./atk_mw1278d.o \
+./delay.o \
 ./demo_lora.o \
 ./empty.o \
 ./ti_msp_dl_config.o \
@@ -52,6 +55,7 @@ GEN_MISC_FILES += \
 
 OBJS__QUOTED += \
 "atk_mw1278d.o" \
+"delay.o" \
 "demo_lora.o" \
 "empty.o" \
 "ti_msp_dl_config.o" \
@@ -65,6 +69,7 @@ GEN_MISC_FILES__QUOTED += \
 
 C_DEPS__QUOTED += \
 "atk_mw1278d.d" \
+"delay.d" \
 "demo_lora.d" \
 "empty.d" \
 "ti_msp_dl_config.d" \
@@ -79,6 +84,7 @@ GEN_FILES__QUOTED += \
 
 C_SRCS__QUOTED += \
 "../atk_mw1278d.c" \
+"../delay.c" \
 "../demo_lora.c" \
 "../empty.c" \
 "./ti_msp_dl_config.c" \
