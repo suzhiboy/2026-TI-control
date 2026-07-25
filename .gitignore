@@ -1,0 +1,10 @@
+Debug/
+Release/
+.clangd
+Debug/.clangd/
+*.o
+*.out
+*.map
+*_linkInfo.xml
+*.d
+*.d_raw
