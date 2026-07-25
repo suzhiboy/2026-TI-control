@@ -1,6 +1,15 @@
 #include "imu601.h"
 
-void IMU601_init()
+/* 接收缓冲区及状态变量 */
+static uint8_t RX_buffer[12] = {0};
+static uint8_t RX_index = 0;
+static uint8_t last_byte = 0;
+static uint8_t is_receiving = 0;
+
+/* 当前姿态数据 */
+Attitude_t current_attitude;
+
+void IMU601_init(void)
 {
     uint8_t IMU_reset[] = {0xAA, 0x55, 0x60, 0x12, 0x00, 0x72};
     UART_send_buffer(IMU601_INST, IMU_reset, sizeof(IMU_reset));
@@ -12,15 +21,6 @@ void IMU601_init()
 
     NVIC_EnableIRQ(IMU601_INST_INT_IRQN);
 }
-
-uint8_t RX_buffer[12] = {0};
-uint8_t RX_index = 0;
-uint8_t last_byte = 0;
-uint8_t is_receiving = 0;
-
-#include <stdint.h>
-
-Attitude_t current_attitude;
 
 void parse_attitude_only(const uint8_t *payload, Attitude_t *out_attitude) {
     uint16_t yaw_raw   = (payload[1] << 8) | payload[0];

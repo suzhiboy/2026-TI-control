@@ -16,7 +16,8 @@ C_SRCS += \
 ./ti_msp_dl_config.c \
 C:/TI/mspm0_sdk_2_11_00_07/source/ti/devices/msp/m0p/startup_system_files/ticlang/startup_mspm0g350x_ticlang.c \
 ../imu601.c \
-../oled.c 
+../oled.c \
+../uart.c 
 
 GEN_CMDS += \
 ./device_linker.cmd 
@@ -34,7 +35,8 @@ C_DEPS += \
 ./ti_msp_dl_config.d \
 ./startup_mspm0g350x_ticlang.d \
 ./imu601.d \
-./oled.d 
+./oled.d \
+./uart.d 
 
 GEN_OPTS += \
 ./device.opt 
@@ -47,7 +49,8 @@ OBJS += \
 ./ti_msp_dl_config.o \
 ./startup_mspm0g350x_ticlang.o \
 ./imu601.o \
-./oled.o 
+./oled.o \
+./uart.o 
 
 GEN_MISC_FILES += \
 ./device.cmd.genlibs \
@@ -61,7 +64,8 @@ OBJS__QUOTED += \
 "ti_msp_dl_config.o" \
 "startup_mspm0g350x_ticlang.o" \
 "imu601.o" \
-"oled.o" 
+"oled.o" \
+"uart.o" 
 
 GEN_MISC_FILES__QUOTED += \
 "device.cmd.genlibs" \
@@ -75,7 +79,8 @@ C_DEPS__QUOTED += \
 "ti_msp_dl_config.d" \
 "startup_mspm0g350x_ticlang.d" \
 "imu601.d" \
-"oled.d" 
+"oled.d" \
+"uart.d" 
 
 GEN_FILES__QUOTED += \
 "device_linker.cmd" \
@@ -90,7 +95,8 @@ C_SRCS__QUOTED += \
 "./ti_msp_dl_config.c" \
 "C:/TI/mspm0_sdk_2_11_00_07/source/ti/devices/msp/m0p/startup_system_files/ticlang/startup_mspm0g350x_ticlang.c" \
 "../imu601.c" \
-"../oled.c" 
+"../oled.c" \
+"../uart.c" 
 
 SYSCFG_SRCS__QUOTED += \
 "../empty.syscfg" 

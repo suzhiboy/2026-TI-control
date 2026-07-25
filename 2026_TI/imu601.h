@@ -9,8 +9,17 @@
 // 汇电籽-601   mspm0g3507
 // V           5V
 // G           GND
-// T           PA25
-// R           PA26
+// T           PA25 (UART1 TX)
+// R           PA26 (UART1 RX)
+
+/* UART 实例定义 (SysConfig 未配置时使用以下默认值) */
+#ifndef IMU601_INST
+#define IMU601_INST            UART1           /* UART1 外设 */
+#endif
+
+#ifndef IMU601_INST_INT_IRQN
+#define IMU601_INST_INT_IRQN   UART1_INT_IRQn  /* UART1 中断号 */
+#endif
 
 void IMU601_init();
 

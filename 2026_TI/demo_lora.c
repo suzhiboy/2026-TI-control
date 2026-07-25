@@ -79,20 +79,20 @@ void demo_lora_run(void)
     uint8_t ret;
     uint8_t *buf;
 
-    OLED_Show_String(1, 1, "LORA Init...");
+    OLED_Show_String(1, 1, (uint8_t *)"LORA Init...");
 
     /* 初始化 LORA 模块 (默认 115200 波特率) */
     ret = atk_mw1278d_init(115200);
     if (ret != ATK_MW1278D_EOK)
     {
-        OLED_Show_String(2, 1, "LORA Init FAIL!");
+        OLED_Show_String(2, 1, (uint8_t *)"LORA Init FAIL!");
         printf("[LORA] Init failed!\r\n");
         while (1)
         {
             delay_ms(500);
         }
     }
-    OLED_Show_String(2, 1, "LORA Init OK  ");
+    OLED_Show_String(2, 1, (uint8_t *)"LORA Init OK  ");
 
     /* 进入配置模式, 配置 LORA 模块参数 */
     atk_mw1278d_enter_config();
@@ -177,10 +177,15 @@ void lora_send_to_addr(uint16_t addr, char *data)
         uint8_t addr_h = (uint8_t)(addr >> 8) & 0xFF;
         uint8_t addr_l = (uint8_t)(addr & 0xFF);
 
-        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, &addr_h, 1);
-        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, &addr_l, 1);
-        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST,
-                                     (uint8_t *)data, strlen(data));
+        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, addr_h);
+        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, addr_l);
+        {
+            uint16_t dlen = strlen(data);
+            for (uint16_t i = 0; i < dlen; i++)
+            {
+                DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, (uint8_t)data[i]);
+            }
+        }
 
         printf("[LORA TX -> 0x%04X]: %s\r\n", addr, data);
     }

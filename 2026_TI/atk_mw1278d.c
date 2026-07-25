@@ -88,7 +88,10 @@ void atk_mw1278d_uart_printf(char *fmt, ...)
     va_end(ap);
 
     len = strlen((const char *)g_uart_tx_buf);
-    DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, g_uart_tx_buf, len);
+    for (uint16_t i = 0; i < len; i++)
+    {
+        DL_UART_transmitDataBlocking(ATK_MW1278D_UART_INST, g_uart_tx_buf[i]);
+    }
 }
 
 /**

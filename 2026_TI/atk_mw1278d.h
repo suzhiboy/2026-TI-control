@@ -62,6 +62,16 @@ extern "C" {
 /*===========================================================================
  * UART 配置 (通过 SysConfig 配置 UART2)
  *===========================================================================*/
+
+/* SysConfig 生成宏的默认值 (当 SysConfig 未配置时使用) */
+#ifndef UART_2_INST
+#define UART_2_INST                UART2               /* UART2 外设 */
+#endif
+
+#ifndef UART_2_INST_INT_IRQN
+#define UART_2_INST_INT_IRQN       UART2_INT_IRQn      /* UART2 中断号 */
+#endif
+
 #define ATK_MW1278D_UART_INST          UART_2_INST         /* 使用的 UART 外设实例 */
 #define ATK_MW1278D_UART_INT_IRQN      UART_2_INST_INT_IRQN
 
@@ -72,6 +82,11 @@ extern "C" {
 /*===========================================================================
  * 定时器配置 (用于接收帧超时检测, 通过 SysConfig 配置)
  *===========================================================================*/
+
+#ifndef TIMER_0_INST
+#define TIMER_0_INST               TIMG0               /* 定时器外设 (GPTimer) */
+#endif
+
 #define ATK_MW1278D_TIMER_INST         TIMER_0_INST        /* 使用的定时器外设实例 */
 
 /*===========================================================================
