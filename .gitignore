@@ -1,1 +1,49 @@
 .claude
+# ==========================================
+# 编译输出文件 & 临时文件 (Build & Temps)
+# ==========================================
+*.o
+*.obj
+*.d
+*.elf
+*.bin
+*.hex
+*.axf
+*.map
+*.lst
+*.crf
+*.dep
+*.build_log.htm
+*.htm
+*.htm*
+
+# ==========================================
+# IDE / 编辑器生成的临时配置 (IDE Settings)
+# ==========================================
+# Keil / MDK
+/MDK-ARM/*.bak
+/MDK-ARM/*.dep
+/MDK-ARM/JLink*
+/MDK-ARM/Lst/
+/MDK-ARM/Objects/
+/MDK-ARM/DebugConfig/
+
+# Code Composer Studio (CCS) / TI MSPM0
+.launches/
+.settings/
+.config/
+Debug/
+Release/
+
+# VSCode & PlatformIO
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/c_cpp_properties.json
+.pio/
+.clang-format
+
+# 操作系统自动生成的文件
+.DS_Store
+Thumbs.db
+[Dd]esktop.ini
