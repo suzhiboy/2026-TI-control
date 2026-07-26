@@ -6,19 +6,19 @@ void Electromagnet_Init(void)
 {
     /* GPIO is initialized by SYSCFG_DL_init().
      * Ensure the pin starts in the OFF (low) state. */
-    DL_GPIO_clearPins(GPIO_ELECTROMAGNET_CTRL_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
+    DL_GPIO_clearPins(GPIO_ELECTROMAGNET_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
     electromagnet_on = false;
 }
 
 void Electromagnet_On(void)
 {
-    DL_GPIO_setPins(GPIO_ELECTROMAGNET_CTRL_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
+    DL_GPIO_setPins(GPIO_ELECTROMAGNET_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
     electromagnet_on = true;
 }
 
 void Electromagnet_Off(void)
 {
-    DL_GPIO_clearPins(GPIO_ELECTROMAGNET_CTRL_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
+    DL_GPIO_clearPins(GPIO_ELECTROMAGNET_PORT, GPIO_ELECTROMAGNET_CTRL_PIN);
     electromagnet_on = false;
 }
 
