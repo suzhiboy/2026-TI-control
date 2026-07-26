@@ -10,6 +10,7 @@ const GPIO   = scripting.addModule("/ti/driverlib/GPIO", {}, false);
 const GPIO1  = GPIO.addInstance();
 const GPIO2  = GPIO.addInstance();
 const GPIO3  = GPIO.addInstance();
+const GPIO4  = GPIO.addInstance();
 const I2C    = scripting.addModule("/ti/driverlib/I2C", {}, false);
 const I2C1   = I2C.addInstance();
 const PWM    = scripting.addModule("/ti/driverlib/PWM", {}, false);
@@ -67,6 +68,11 @@ GPIO3.associatedPins[3].$name            = "QEI_RIGHT_B";
 GPIO3.associatedPins[3].direction        = "INPUT";
 GPIO3.associatedPins[3].internalResistor = "PULL_UP";
 GPIO3.associatedPins[3].pin.$assign      = "PB8";
+
+GPIO4.$name                         = "GPIO_ELECTROMAGNET";
+GPIO4.associatedPins.create(1);
+GPIO4.associatedPins[0].$name       = "CTRL";
+GPIO4.associatedPins[0].pin.$assign = "PA18";
 
 I2C1.$name                             = "OLED";
 I2C1.basicEnableController             = true;
