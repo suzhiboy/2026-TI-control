@@ -31,11 +31,57 @@
  */
 
 #include "ti_msp_dl_config.h"
+#include "line_follow.h"
+#include "imu601.h"
+#include "oled.h"
+#include <stdio.h>
 
 int main(void)
 {
+    char oled_str[50];
+
     SYSCFG_DL_init();
 
+    OLED_Init();
+    OLED_Clear();
+    OLED_ShowLineString(1, 1, "OLED OK");
+    OLED_Refresh();
+    delay_cycles(1600000);
+
+    LineTrack_Init();
+    IMU601_init();
+
+    NVIC_SetPriority(GPIOB_INT_IRQn, 0);
+    NVIC_SetPriority(IMU601_INST_INT_IRQN, 1);
+    NVIC_SetPriority(TIMER_0_INST_INT_IRQN, 2);
+    __enable_irq();
+
+    LineTrack_Start(12.0f);
+    DL_Timer_startCounter(TIMER_0_INST);
+    NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
+
     while (1) {
+        IMU601_poll();
+
+        sprintf(oled_str, "Yaw: %.2f", current_attitude.yaw);
+        OLED_ShowLineString(1, 1, oled_str);
+        sprintf(oled_str, "Pitch: %.2f", current_attitude.pitch);
+        OLED_ShowLineString(2, 1, oled_str);
+        sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
+        OLED_ShowLineString(3, 1, oled_str);
+        OLED_ShowLineString(4, 1, "");
+        OLED_Refresh();
+        delay_cycles(3200000);
+    }
+}
+
+void TIMER_0_INST_IRQHandler(void)
+{
+    switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
+        case DL_TIMER_IIDX_ZERO:
+            LineTrack_Loop_10ms();
+            break;
+        default:
+            break;
     }
 }
