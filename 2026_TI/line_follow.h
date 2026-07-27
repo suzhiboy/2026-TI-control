@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "pid.h"
+#include "pid_params.h"
 
 extern PID_TypeDef pid_line;
 extern PID_TypeDef pid_speed_L;
@@ -13,9 +14,18 @@ void LineTrack_Start(float base_speed);
 void LineTrack_Stop(void);
 void LineTrack_Reset(void);
 void LineTrack_Loop_10ms(void);
+void LineTrack_SetParams(const PidTuningParams *params);
+void LineTrack_GetParams(PidTuningParams *params);
+void LineTrack_ClearPidState(void);
 bool LineTrack_IsRunning(void);
 float LineTrack_Get_Error(void);
+float LineTrack_Get_TurnOut(void);
+float LineTrack_Get_BaseSpeed(void);
 float LineTrack_Get_FilteredLeft(void);
 float LineTrack_Get_FilteredRight(void);
+float LineTrack_Get_LeftTarget(void);
+float LineTrack_Get_RightTarget(void);
+float LineTrack_Get_LeftPwm(void);
+float LineTrack_Get_RightPwm(void);
 
 #endif

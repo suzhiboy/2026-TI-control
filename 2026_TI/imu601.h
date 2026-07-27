@@ -10,8 +10,8 @@
  * HuiDianZi-601 module:
  *   V -> 5V
  *   G -> GND
- *   T -> MSPM0 UART RX, PA31
- *   R -> MSPM0 UART TX, PA28
+ *   T -> MSPM0 UART RX, PB7
+ *   R -> MSPM0 UART TX, PB6
  *
  * The board contains an ICM42688 plus a TI MCU. The external connector is the
  * module UART protocol, not the raw ICM42688 I2C/SPI bus.

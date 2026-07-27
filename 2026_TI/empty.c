@@ -34,11 +34,16 @@
 #include "line_follow.h"
 #include "imu601.h"
 #include "oled.h"
+#include "vofa.h"
 #include <stdio.h>
+
+static volatile uint32_t control_ticks_10ms = 0;
 
 int main(void)
 {
     char oled_str[50];
+    uint32_t last_vofa_tick = 0;
+    uint32_t last_oled_tick = 0;
 
     SYSCFG_DL_init();
 
@@ -54,24 +59,39 @@ int main(void)
     NVIC_SetPriority(GPIOB_INT_IRQn, 0);
     NVIC_SetPriority(IMU601_INST_INT_IRQN, 1);
     NVIC_SetPriority(TIMER_0_INST_INT_IRQN, 2);
+    NVIC_SetPriority(VOFA_INST_INT_IRQN, 3);
     __enable_irq();
 
-    LineTrack_Start(12.0f);
+    Vofa_Init();
+
+    LineTrack_Start(LineTrack_Get_BaseSpeed());
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
     while (1) {
-        IMU601_poll();
+        uint32_t now;
 
-        sprintf(oled_str, "Yaw: %.2f", current_attitude.yaw);
-        OLED_ShowLineString(1, 1, oled_str);
-        sprintf(oled_str, "Pitch: %.2f", current_attitude.pitch);
-        OLED_ShowLineString(2, 1, oled_str);
-        sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
-        OLED_ShowLineString(3, 1, oled_str);
-        OLED_ShowLineString(4, 1, "");
-        OLED_Refresh();
-        delay_cycles(3200000);
+        IMU601_poll();
+        Vofa_Poll();
+
+        now = control_ticks_10ms;
+        if ((uint32_t)(now - last_vofa_tick) >= 2U) {
+            last_vofa_tick = now;
+            Vofa_SendTelemetry();
+        }
+
+        if ((uint32_t)(now - last_oled_tick) >= 10U) {
+            last_oled_tick = now;
+            sprintf(oled_str, "Yaw: %.2f", current_attitude.yaw);
+            OLED_ShowLineString(1, 1, oled_str);
+            sprintf(oled_str, "Pitch: %.2f", current_attitude.pitch);
+            OLED_ShowLineString(2, 1, oled_str);
+            sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
+            OLED_ShowLineString(3, 1, oled_str);
+            sprintf(oled_str, "B:%.1f E:%.1f", LineTrack_Get_BaseSpeed(), LineTrack_Get_Error());
+            OLED_ShowLineString(4, 1, oled_str);
+            OLED_Refresh();
+        }
     }
 }
 
@@ -80,6 +100,7 @@ void TIMER_0_INST_IRQHandler(void)
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
         case DL_TIMER_IIDX_ZERO:
             LineTrack_Loop_10ms();
+            control_ticks_10ms++;
             break;
         default:
             break;
