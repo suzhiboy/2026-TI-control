@@ -1,97 +1,124 @@
 ================================================================================
-  ATK-LORA-01 驱动 - SysConfig 配置指南
+  ATK-LORA-01 驱动 - SysConfig 配置指南 (已修正)
   MSPM0G3507 + CCS (Code Composer Studio)
+  最后更新: 2026-07-28
 ================================================================================
 
-【步骤1】打开 CCS, 在工程中打开 .syscfg 文件, 进行以下配置:
+【硬件接线】
+  ATK-LORA-01    MSPM0G3507
+  ───────────    ──────────
+  VCC    ─────── 5V
+  GND    ─────── GND
+  TXD    ─────── PA1  (UART0_RX)
+  RXD    ─────── PA0  (UART0_TX)
+  MD0    ─────── PB0  (GPIO 输出)
+  AUX    ─────── PB1  (GPIO 输入)
 
---------------------------------------------------------------------------------
- 1. UART 配置 (LORA 模块通信)
---------------------------------------------------------------------------------
+【重要: IOMUX 编号修正】
+  之前的 board_config.h 中有 IOMUX 编号错误:
+  ✗ BOARD_ATK_LORA_01_MD0_IOMUX = IOMUX_PINCM16  ← PINCM16 是 PB3 (IMU601 RX)!
+  ✓ BOARD_ATK_LORA_01_MD0_IOMUX = IOMUX_PINCM12  ← PB0
 
-  添加 UART 外设:
-  - Name: UART_2 (或任意名称, 需要与 board_config.h 中 BOARD_ATK_LORA_01_UART_INST 一致)
-  - TX Pin: PA8
-  - RX Pin: PA9
-  - Baud Rate: 115200
-  - Data Bits: 8
-  - Stop Bits: 1
-  - Parity: None
-  - 勾选 "Enable RX Interrupt" (接收中断)
+  ✗ BOARD_ATK_LORA_01_AUX_IOMUX = IOMUX_PINCM17  ← PINCM17 是 PB4
+  ✓ BOARD_ATK_LORA_01_AUX_IOMUX = IOMUX_PINCM13  ← PB1
 
-  注意: 如果使用其他 UART 引脚, 请对应修改 board_config.h 中的宏定义。
+  ✗ BOARD_ATK_LORA_01_UART_INST = UART2           ← UART2 被 VOFA 占用!
+  ✓ BOARD_ATK_LORA_01_UART_INST = UART0           ← UART0 空闲, PA0/PA1 空闲
 
---------------------------------------------------------------------------------
- 2. Timer 配置 (接收帧超时检测)
---------------------------------------------------------------------------------
+  ✗ BOARD_ATK_LORA_01_TIMER_INST = TIMA0          ← TIMA0 被控制循环占用!
+  ✓ BOARD_ATK_LORA_01_TIMER_INST = TIMA1          ← TIMA1 空闲
 
-  添加 Timer 外设:
-  - Name: TIMER_0 (或任意名称, 需要与 board_config.h 中 BOARD_ATK_LORA_01_TIMER_INST 一致)
-  - Counter Mode: Periodic 或 Down
-  - Prescaler: 256
-  - Period: 10 ms  (当前配置: 1249 load, prescale=256, 10ms)
-  - 勾选 "Enable Zero Event Interrupt"
+  board_config.h 中已经修正, 不需要再手动修改.
 
-  说明: 定时器周期 = 10ms, 驱动中设置帧超时阈值为 10 个 tick = 100ms,
-        即 100ms 无新数据则认为一帧结束。
+================================================================================
+  SysConfig 配置 (empty.syscfg 已添加, 只需重新生成)
+================================================================================
 
---------------------------------------------------------------------------------
- 3. GPIO 配置 (MD0 和 AUX 引脚)
---------------------------------------------------------------------------------
+  以下内容已写入 empty.syscfg, 你只需要:
 
-  MD0 引脚 (PB0) - 模式选择:
-  - Direction: Output
-  - Initial Output: Low
-  - Drive Strength: High
+  1. 在 CCS 中右键 empty.syscfg → "Generate Code" (或保存文件自动生成)
+  2. 编译项目
 
-  AUX 引脚 (PB1) - 模块状态:
-  - Direction: Input
-  - Pull: Pull-up
+  新增的 SysConfig 配置:
 
---------------------------------------------------------------------------------
- 4. 中断向量挂接
---------------------------------------------------------------------------------
+  ── UART 配置 ──
+  Name:           LORA_UART
+  外设:           UART0
+  TX Pin:         PA0
+  RX Pin:         PA1
+  Baud Rate:      115200
+  Data Bits:      8
+  Stop Bits:      1
+  Parity:         None
+  RX Interrupt:   Enabled
 
-  SysConfig 生成代码后, 在你的中断处理文件中添加:
+  ── Timer 配置 ──
+  Name:           LORA_TIMER
+  外设:           TIMA1
+  Counter Mode:   PERIODIC
+  Prescaler:      256
+  Period:         10 ms
+  Zero Event Interrupt: Enabled
 
-  // UART 中断
-  void UART_2_INST_IRQHandler(void)
+  生成后, ti_msp_dl_config.h/c 会自动包含:
+    #define LORA_UART_INST    UART0
+    #define LORA_UART_INST_INT_IRQN  UART0_INT_IRQn
+    #define LORA_TIMER_INST   TIMA1
+    #define LORA_TIMER_INST_INT_IRQN  TIMA1_INT_IRQn
+
+  SYSCFG_DL_init() 中也会自动添加:
+    SYSCFG_DL_LORA_UART_init();
+    SYSCFG_DL_LORA_TIMER_init();
+
+================================================================================
+  IRQ Handler (empty.c 中已添加)
+================================================================================
+
+  void LORA_UART_INST_IRQHandler(void)
   {
       ATK_LORA_01_UART_IRQHandler();
   }
 
-  // Timer0 中断
-  void TIMER_0_INST_IRQHandler(void)
+  void LORA_TIMER_INST_IRQHandler(void)
   {
       ATK_LORA_01_TIM_IRQHandler();
   }
 
-  或者, 将以上 ISR 函数直接写在 atk_lora_01.c 末尾。
-
 ================================================================================
-  文件结构
+  使用步骤
 ================================================================================
 
-  2026_TI/
-  ├── atk_lora_01.h        -- LORA 驱动头文件 (类型定义、函数声明)
-  ├── atk_lora_01.c        -- LORA 驱动实现文件
-  ├── demo_lora.c          -- 使用示例代码 (当前为 PB22 控制演示)
-  └── lora_syscfg_guide.txt -- 本配置指南
+  1. 按上述步骤配置 SysConfig + 编译
+  2. 在 main() 中:
 
-================================================================================
-  快速使用
-================================================================================
+  #include "atk_lora_01.h"
 
-  1. 按照上述步骤配置 SysConfig
-  2. 在 main.c 中包含头文件:
-     #include "atk_lora_01.h"
-  3. 初始化 LORA 模块:
-     atk_lora_01_init(115200);
-  4. 配置参数后, 进入透传模式发送数据:
-     atk_lora_01_uart_printf("Hello LORA!\r\n");
-  5. 接收数据:
-     uint8_t *buf = atk_lora_01_uart_rx_get_frame();
-     if (buf != NULL) { ... }
+  // 初始化 LORA 模块
+  if (atk_lora_01_init(115200) == ATK_LORA_01_EOK) {
+      printf("LORA module init OK!\r\n");
+  } else {
+      printf("LORA module init FAILED!\r\n");
+  }
+
+  // 配置参数示例 (在配置模式下):
+  atk_lora_01_enter_config();                    // 进入配置模式 (MD0=1)
+  atk_lora_01_addr_config(0x0001);               // 设置地址
+  atk_lora_01_tpower_config(ATK_LORA_01_TPOWER_20DBM);  // 最大功率
+  atk_lora_01_wlrate_channel_config(23, ATK_LORA_01_WLRATE_19K2); // 信道23, 19.2Kbps
+  atk_lora_01_echo_config(ATK_LORA_01_DISABLE);  // 关闭回显
+  atk_lora_01_flash_config(ATK_LORA_01_ENABLE);  // 保存配置
+  atk_lora_01_exit_config();                     // 退出配置模式 (MD0=0)
+
+  // 发送数据 (透传模式):
+  atk_lora_01_uart_printf("Hello LORA World!\r\n");
+
+  // 接收数据 (在主循环中轮询):
+  uint8_t *rx_buf = atk_lora_01_uart_rx_get_frame();
+  if (rx_buf != NULL) {
+      // 处理接收到的数据
+      printf("LORA RX: %s\r\n", rx_buf);
+      atk_lora_01_uart_rx_restart();  // 重新开始接收
+  }
 
 ================================================================================
   AT 指令速查表
@@ -111,3 +138,13 @@
   AT+WLRATE=C,R    无线速率和信道          C:0~83 R:0~5
   AT+WLTIME=0~1    唤醒时间                0:1秒 1:2秒
   AT+UART=B,P      串口参数                B:0~7(波特率) P:0~2(校验)
+
+================================================================================
+  注意事项
+================================================================================
+
+  1. 模块出厂默认: 地址=0x0000, 信道=23, 速率=19.2Kbps, 功率=20dBm, 115200 8N1
+  2. 两个模块要通讯, 必须信道一致, 透传模式地址无关
+  3. AUX 引脚指示模块状态: 低电平=空闲, 高电平=忙碌
+  4. 发送数据前建议检查 AUX 是否空闲
+  5. 初始化时 MCU 端和 LORA 模块端的波特率必须一致

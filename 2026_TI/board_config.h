@@ -67,7 +67,18 @@
  * ATK-LORA-01 模块引脚 / 外设定义
  * 模块型号: 正点原子 ATK-LORA-01 (核心芯片: MW1278D)
  *
- * 注意: TIMER 实际由 SysConfig 中 TIMER_0 (TIMA0) 提供, 此处定义仅作默认备选
+ * 硬件接线:
+ *   ATK-LORA-01    MSPM0G3507
+ *   VCC            ─── 5V
+ *   GND            ─── GND
+ *   TXD            ─── PA1  (UART0_RX)
+ *   RXD            ─── PA0  (UART0_TX)
+ *   MD0            ─── PB0  (GPIO 输出, IOMUX_PINCM12)
+ *   AUX            ─── PB1  (GPIO 输入, IOMUX_PINCM13)
+ *
+ * 注意: 需要在 SysConfig 中添加:
+ *   - UART 实例 "LORA_UART", 外设 UART0, TX=PA0, RX=PA1, 115200 8N1
+ *   - TIMER 实例 "LORA_TIMER", 外设 TIMA1, 10ms periodic
  */
 #ifndef BOARD_ATK_LORA_01_MD0_PORT
 #define BOARD_ATK_LORA_01_MD0_PORT      GPIOB
@@ -77,8 +88,9 @@
 #define BOARD_ATK_LORA_01_MD0_PIN       DL_GPIO_PIN_0
 #endif
 
+/* PB0 = IOMUX_PINCM12 (不是 PINCM16! PINCM16=PB3=IMU601_RX) */
 #ifndef BOARD_ATK_LORA_01_MD0_IOMUX
-#define BOARD_ATK_LORA_01_MD0_IOMUX     IOMUX_PINCM16
+#define BOARD_ATK_LORA_01_MD0_IOMUX     IOMUX_PINCM12
 #endif
 
 #ifndef BOARD_ATK_LORA_01_AUX_PORT
@@ -89,20 +101,23 @@
 #define BOARD_ATK_LORA_01_AUX_PIN       DL_GPIO_PIN_1
 #endif
 
+/* PB1 = IOMUX_PINCM13 (不是 PINCM17! PINCM17=PB4) */
 #ifndef BOARD_ATK_LORA_01_AUX_IOMUX
-#define BOARD_ATK_LORA_01_AUX_IOMUX     IOMUX_PINCM17
+#define BOARD_ATK_LORA_01_AUX_IOMUX     IOMUX_PINCM13
 #endif
 
+/* === UART 配置: 使用 UART0 (PA0=TX, PA1=RX) === */
 #ifndef BOARD_ATK_LORA_01_UART_INST
-#define BOARD_ATK_LORA_01_UART_INST     UART2
+#define BOARD_ATK_LORA_01_UART_INST     LORA_UART_INST
 #endif
 
 #ifndef BOARD_ATK_LORA_01_UART_INT_IRQN
-#define BOARD_ATK_LORA_01_UART_INT_IRQN UART2_INT_IRQn
+#define BOARD_ATK_LORA_01_UART_INT_IRQN LORA_UART_INST_INT_IRQN
 #endif
 
+/* === TIMER 配置: 使用 TIMA1, 10ms 周期 (帧超时检测) === */
 #ifndef BOARD_ATK_LORA_01_TIMER_INST
-#define BOARD_ATK_LORA_01_TIMER_INST    TIMA0
+#define BOARD_ATK_LORA_01_TIMER_INST    LORA_TIMER_INST
 #endif
 
 /* === 旧名称兼容 (过渡用, 后续移除) === */

@@ -37,6 +37,7 @@
 #include "vofa.h"
 #include "mt6701.h"
 #include "board_config.h"
+#include "atk_lora_01.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
@@ -65,6 +66,8 @@ int main(void)
     NVIC_SetPriority(IMU601_INST_INT_IRQN, 1);
     NVIC_SetPriority(TIMER_0_INST_INT_IRQN, 2);
     NVIC_SetPriority(VOFA_INST_INT_IRQN, 3);
+    NVIC_SetPriority(LORA_UART_INST_INT_IRQN, 4);
+    NVIC_SetPriority(LORA_TIMER_INST_INT_IRQN, 4);
     __enable_irq();
 
     Vofa_Init();
@@ -117,4 +120,16 @@ void TIMER_0_INST_IRQHandler(void)
         default:
             break;
     }
+}
+
+/* ======== ATK-LORA-01 UART 中断 (UART0, PA0=TX, PA1=RX) ======== */
+void LORA_UART_INST_IRQHandler(void)
+{
+    ATK_LORA_01_UART_IRQHandler();
+}
+
+/* ======== ATK-LORA-01 帧超时定时器中断 (TIMA1, 10ms) ======== */
+void LORA_TIMER_INST_IRQHandler(void)
+{
+    ATK_LORA_01_TIM_IRQHandler();
 }

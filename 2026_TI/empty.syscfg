@@ -188,6 +188,34 @@ UART2.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
 UART2.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
 UART2.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric5";
 
+/* ======== ATK-LORA-01 模块 (UART0, PA0=TX, PA1=RX, 115200) ======== */
+const UART3 = UART.addInstance();
+UART3.$name                            = "LORA_UART";
+UART3.targetBaudRate                   = 115200;
+UART3.enabledInterrupts                = ["RX"];
+UART3.peripheral.$assign               = "UART0";
+UART3.peripheral.rxPin.$assign         = "PA1";
+UART3.peripheral.txPin.$assign         = "PA0";
+UART3.txPinConfig.direction            = scripting.forceWrite("OUTPUT");
+UART3.txPinConfig.hideOutputInversion  = scripting.forceWrite(false);
+UART3.txPinConfig.onlyInternalResistor = scripting.forceWrite(false);
+UART3.txPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
+UART3.txPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric10";
+UART3.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric11";
+UART3.rxPinConfig.hideOutputInversion  = scripting.forceWrite(false);
+UART3.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
+UART3.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
+/* UART 输入不需要上拉, 外部 LoRa 模块驱动 TXD */
+
+/* ======== ATK-LORA-01 帧超时定时器 (TIMA1, 10ms) ======== */
+const TIMER2 = TIMER.addInstance();
+TIMER2.$name            = "LORA_TIMER";
+TIMER2.interrupts       = ["ZERO"];
+TIMER2.timerMode        = "PERIODIC";
+TIMER2.timerPeriod      = "10 ms";
+TIMER2.timerClkPrescale = 256;
+TIMER2.peripheral.$suggestSolution = "TIMA1";
+
 /**
  * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
  * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
