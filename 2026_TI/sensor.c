@@ -1,6 +1,6 @@
 #include "sensor.h"
+#include "board_config.h"
 
-#define SENSOR_SWITCH_DELAY_CYCLES 1600U
 #define LINE_DETECTED             1U
 #define LINE_UNDETECTED           0U
 
@@ -8,26 +8,26 @@ void Sensor_Read_All(uint8_t results[SENSOR_COUNT])
 {
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
         if (i & 0x01U) {
-            DL_GPIO_setPins(GPIO_SENSOR_AD0_PORT, GPIO_SENSOR_AD0_PIN);
+            DL_GPIO_setPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD0_PIN);
         } else {
-            DL_GPIO_clearPins(GPIO_SENSOR_AD0_PORT, GPIO_SENSOR_AD0_PIN);
+            DL_GPIO_clearPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD0_PIN);
         }
 
         if (i & 0x02U) {
-            DL_GPIO_setPins(GPIO_SENSOR_AD1_PORT, GPIO_SENSOR_AD1_PIN);
+            DL_GPIO_setPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD1_PIN);
         } else {
-            DL_GPIO_clearPins(GPIO_SENSOR_AD1_PORT, GPIO_SENSOR_AD1_PIN);
+            DL_GPIO_clearPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD1_PIN);
         }
 
         if (i & 0x04U) {
-            DL_GPIO_setPins(GPIO_SENSOR_AD2_PORT, GPIO_SENSOR_AD2_PIN);
+            DL_GPIO_setPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD2_PIN);
         } else {
-            DL_GPIO_clearPins(GPIO_SENSOR_AD2_PORT, GPIO_SENSOR_AD2_PIN);
+            DL_GPIO_clearPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD2_PIN);
         }
 
         delay_cycles(SENSOR_SWITCH_DELAY_CYCLES);
 
-        results[i] = DL_GPIO_readPins(GPIO_SENSOR_OUT_PORT, GPIO_SENSOR_OUT_PIN) ?
+        results[i] = DL_GPIO_readPins(GPIO_SENSOR_PORT, GPIO_SENSOR_OUT_PIN) ?
                      LINE_DETECTED : LINE_UNDETECTED;
     }
 }

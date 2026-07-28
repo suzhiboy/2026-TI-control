@@ -8,40 +8,43 @@ static volatile int32_t right_pulse_count = 0;
 
 void Encoder_Init(void)
 {
-    DL_GPIO_clearInterruptStatus(GPIOB, DL_GPIO_PIN_6 | DL_GPIO_PIN_7);
-    DL_GPIO_enableInterrupt(GPIOB, DL_GPIO_PIN_6 | DL_GPIO_PIN_7);
-    NVIC_EnableIRQ(GPIOB_INT_IRQn);
+    DL_GPIO_clearInterruptStatus(GPIO_ENCODER_PORT,
+        GPIO_ENCODER_QEI_LEFT_A_PIN | GPIO_ENCODER_QEI_RIGHT_A_PIN);
+    DL_GPIO_enableInterrupt(GPIO_ENCODER_PORT,
+        GPIO_ENCODER_QEI_LEFT_A_PIN | GPIO_ENCODER_QEI_RIGHT_A_PIN);
+    NVIC_EnableIRQ(GPIO_ENCODER_INT_IRQN);
 }
 
 void GROUP1_IRQHandler(void)
 {
     uint32_t pending_group = DL_Interrupt_getPendingGroup(DL_INTERRUPT_GROUP_1);
 
-    if (pending_group & DL_INTERRUPT_GROUP1_IIDX_GPIOB) {
-        uint32_t gpio_status = DL_GPIO_getEnabledInterruptStatus(GPIOB, DL_GPIO_PIN_6 | DL_GPIO_PIN_7);
+    if (pending_group & GPIO_ENCODER_INT_IIDX) {
+        uint32_t gpio_status = DL_GPIO_getEnabledInterruptStatus(GPIO_ENCODER_PORT,
+            GPIO_ENCODER_QEI_LEFT_A_PIN | GPIO_ENCODER_QEI_RIGHT_A_PIN);
 
-        if (gpio_status & DL_GPIO_PIN_7) {
-            uint8_t phase_a = !!DL_GPIO_readPins(GPIOB, DL_GPIO_PIN_7);
-            uint8_t phase_b = !!DL_GPIO_readPins(GPIOB, DL_GPIO_PIN_9);
+        if (gpio_status & GPIO_ENCODER_QEI_LEFT_A_PIN) {
+            uint8_t phase_a = !!DL_GPIO_readPins(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_LEFT_A_PIN);
+            uint8_t phase_b = !!DL_GPIO_readPins(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_LEFT_B_PIN);
 
             if (phase_a != phase_b) {
                 left_pulse_count--;
             } else {
                 left_pulse_count++;
             }
-            DL_GPIO_clearInterruptStatus(GPIOB, DL_GPIO_PIN_7);
+            DL_GPIO_clearInterruptStatus(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_LEFT_A_PIN);
         }
 
-        if (gpio_status & DL_GPIO_PIN_6) {
-            uint8_t phase_a = !!DL_GPIO_readPins(GPIOB, DL_GPIO_PIN_6);
-            uint8_t phase_b = !!DL_GPIO_readPins(GPIOB, DL_GPIO_PIN_8);
+        if (gpio_status & GPIO_ENCODER_QEI_RIGHT_A_PIN) {
+            uint8_t phase_a = !!DL_GPIO_readPins(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_RIGHT_A_PIN);
+            uint8_t phase_b = !!DL_GPIO_readPins(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_RIGHT_B_PIN);
 
             if (phase_a != phase_b) {
                 right_pulse_count++;
             } else {
                 right_pulse_count--;
             }
-            DL_GPIO_clearInterruptStatus(GPIOB, DL_GPIO_PIN_6);
+            DL_GPIO_clearInterruptStatus(GPIO_ENCODER_PORT, GPIO_ENCODER_QEI_RIGHT_A_PIN);
         }
     }
 }

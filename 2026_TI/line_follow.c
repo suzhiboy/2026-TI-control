@@ -2,6 +2,7 @@
 #include "encoder.h"
 #include "motor.h"
 #include "sensor.h"
+#include "board_config.h"
 
 PID_TypeDef pid_line;
 PID_TypeDef pid_speed_L;
@@ -40,8 +41,10 @@ void LineTrack_Init(void)
 
     PidParams_SetDefaults(&defaults);
     PID_Init(&pid_line, defaults.line.kp, defaults.line.ki, defaults.line.kd, 10.0f, -10.0f, 8.0f);
-    PID_Init(&pid_speed_L, defaults.speed_left.kp, defaults.speed_left.ki, defaults.speed_left.kd, 2000.0f, 0.0f, 1000.0f);
-    PID_Init(&pid_speed_R, defaults.speed_right.kp, defaults.speed_right.ki, defaults.speed_right.kd, 2000.0f, 0.0f, 1000.0f);
+    PID_Init(&pid_speed_L, defaults.speed_left.kp, defaults.speed_left.ki, defaults.speed_left.kd,
+        LINE_SPEED_PID_OUTPUT_MAX, 0.0f, LINE_SPEED_PID_INTEGRAL_MAX);
+    PID_Init(&pid_speed_R, defaults.speed_right.kp, defaults.speed_right.ki, defaults.speed_right.kd,
+        LINE_SPEED_PID_OUTPUT_MAX, 0.0f, LINE_SPEED_PID_INTEGRAL_MAX);
     line_base_speed = defaults.base_speed;
 
     LineTrack_Reset();

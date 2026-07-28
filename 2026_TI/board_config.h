@@ -1,0 +1,102 @@
+#ifndef BOARD_CONFIG_H
+#define BOARD_CONFIG_H
+
+#include "ti_msp_dl_config.h"
+
+#ifndef STARTUP_SPLASH_DELAY_CYCLES
+#define STARTUP_SPLASH_DELAY_CYCLES    (1600000U)
+#endif
+
+#ifndef MOTOR_PWM_MAX
+#define MOTOR_PWM_MAX                  (2000)
+#endif
+
+#ifndef MOTOR_LEFT_FORWARD_AIN1_ACTIVE
+#define MOTOR_LEFT_FORWARD_AIN1_ACTIVE (0U)
+#endif
+
+#ifndef MOTOR_LEFT_FORWARD_AIN2_ACTIVE
+#define MOTOR_LEFT_FORWARD_AIN2_ACTIVE (1U)
+#endif
+
+#ifndef MOTOR_RIGHT_FORWARD_BIN1_ACTIVE
+#define MOTOR_RIGHT_FORWARD_BIN1_ACTIVE (0U)
+#endif
+
+#ifndef MOTOR_RIGHT_FORWARD_BIN2_ACTIVE
+#define MOTOR_RIGHT_FORWARD_BIN2_ACTIVE (1U)
+#endif
+
+#ifndef LINE_SPEED_PID_OUTPUT_MAX
+#define LINE_SPEED_PID_OUTPUT_MAX      (2000.0f)
+#endif
+
+#ifndef LINE_SPEED_PID_INTEGRAL_MAX
+#define LINE_SPEED_PID_INTEGRAL_MAX    (1000.0f)
+#endif
+
+#ifndef SENSOR_SWITCH_DELAY_CYCLES
+#define SENSOR_SWITCH_DELAY_CYCLES     (1600U)
+#endif
+
+#ifndef PRINT_INST
+#define PRINT_INST                     UART0
+#endif
+
+#ifndef TM1637_PORT
+#define TM1637_PORT                    GPIOA
+#endif
+
+#ifndef TM1637_CLK_PIN
+#define TM1637_CLK_PIN                 DL_GPIO_PIN_8
+#endif
+
+#ifndef TM1637_CLK_IOMUX
+#define TM1637_CLK_IOMUX               IOMUX_PINCM9
+#endif
+
+#ifndef TM1637_DIO_PIN
+#define TM1637_DIO_PIN                 DL_GPIO_PIN_9
+#endif
+
+#ifndef TM1637_DIO_IOMUX
+#define TM1637_DIO_IOMUX               IOMUX_PINCM10
+#endif
+
+#ifndef BOARD_ATK_MW1278D_MD0_PORT
+#define BOARD_ATK_MW1278D_MD0_PORT      GPIOB
+#endif
+
+#ifndef BOARD_ATK_MW1278D_MD0_PIN
+#define BOARD_ATK_MW1278D_MD0_PIN       DL_GPIO_PIN_0
+#endif
+
+#ifndef BOARD_ATK_MW1278D_MD0_IOMUX
+#define BOARD_ATK_MW1278D_MD0_IOMUX     IOMUX_PINCM16
+#endif
+
+#ifndef BOARD_ATK_MW1278D_AUX_PORT
+#define BOARD_ATK_MW1278D_AUX_PORT      GPIOB
+#endif
+
+#ifndef BOARD_ATK_MW1278D_AUX_PIN
+#define BOARD_ATK_MW1278D_AUX_PIN       DL_GPIO_PIN_1
+#endif
+
+#ifndef BOARD_ATK_MW1278D_AUX_IOMUX
+#define BOARD_ATK_MW1278D_AUX_IOMUX     IOMUX_PINCM17
+#endif
+
+#ifndef BOARD_ATK_MW1278D_UART_INST
+#define BOARD_ATK_MW1278D_UART_INST     UART2
+#endif
+
+#ifndef BOARD_ATK_MW1278D_UART_INT_IRQN
+#define BOARD_ATK_MW1278D_UART_INT_IRQN UART2_INT_IRQn
+#endif
+
+#ifndef BOARD_ATK_MW1278D_TIMER_INST
+#define BOARD_ATK_MW1278D_TIMER_INST    TIMG0
+#endif
+
+#endif /* BOARD_CONFIG_H */

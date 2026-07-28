@@ -5,7 +5,7 @@
  * @version     V1.0
  * @date        2026-07-24
  * @brief       ATK-LORA-01 (ATK-MW1278D) 模块底层驱动
- * @note        适用于 MSPM0G3507 + TI DriverLib (SysConfig)
+ * @note        适用�?MSPM0G3507 + TI DriverLib (SysConfig)
  *              模块型号: 正点原子 ATK-LORA-01 (核心芯片: MW1278D)
  *
  *              硬件接线说明:
@@ -28,6 +28,7 @@
 #ifndef __ATK_MW1278D_H
 #define __ATK_MW1278D_H
 
+#include "board_config.h"
 #include "ti_msp_dl_config.h"
 #include "delay.h"
 #include <string.h>
@@ -43,48 +44,48 @@ extern "C" {
  *===========================================================================*/
 
 /* --- MD0 引脚 (模式选择) --- */
-#define ATK_MW1278D_MD0_PORT           GPIOB
-#define ATK_MW1278D_MD0_PIN            DL_GPIO_PIN_0       /* PB0 */
-#define ATK_MW1278D_MD0_IOMUX          IOMUX_PINCM16       /* PB0 对应的 IOMUX */
+#define ATK_MW1278D_MD0_PORT           BOARD_ATK_MW1278D_MD0_PORT
+#define ATK_MW1278D_MD0_PIN            BOARD_ATK_MW1278D_MD0_PIN       /* PB0 */
+#define ATK_MW1278D_MD0_IOMUX          BOARD_ATK_MW1278D_MD0_IOMUX       /* PB0 对应�?IOMUX */
 
-/* --- AUX 引脚 (模块状态指示) --- */
-#define ATK_MW1278D_AUX_PORT           GPIOB
-#define ATK_MW1278D_AUX_PIN            DL_GPIO_PIN_1       /* PB1 */
-#define ATK_MW1278D_AUX_IOMUX          IOMUX_PINCM17       /* PB1 对应的 IOMUX */
+/* --- AUX 引脚 (模块状态指�? --- */
+#define ATK_MW1278D_AUX_PORT           BOARD_ATK_MW1278D_AUX_PORT
+#define ATK_MW1278D_AUX_PIN            BOARD_ATK_MW1278D_AUX_PIN       /* PB1 */
+#define ATK_MW1278D_AUX_IOMUX          BOARD_ATK_MW1278D_AUX_IOMUX       /* PB1 对应�?IOMUX */
 
-/* --- MD0 操作宏 --- */
+/* --- MD0 操作�?--- */
 #define ATK_MW1278D_MD0_Set()          DL_GPIO_setPins(ATK_MW1278D_MD0_PORT, ATK_MW1278D_MD0_PIN)
 #define ATK_MW1278D_MD0_Clr()          DL_GPIO_clearPins(ATK_MW1278D_MD0_PORT, ATK_MW1278D_MD0_PIN)
 
-/* --- AUX 读取宏 --- */
+/* --- AUX 读取�?--- */
 #define ATK_MW1278D_AUX_Read()         ((DL_GPIO_readPins(ATK_MW1278D_AUX_PORT, ATK_MW1278D_AUX_PIN) & ATK_MW1278D_AUX_PIN) ? 1 : 0)
 
 /*===========================================================================
  * UART 配置 (通过 SysConfig 配置 UART2)
  *===========================================================================*/
 
-/* SysConfig 生成宏的默认值 (当 SysConfig 未配置时使用) */
+/* SysConfig 生成宏的默认�?(�?SysConfig 未配置时使用) */
 #ifndef UART_2_INST
-#define UART_2_INST                UART2               /* UART2 外设 */
+#define UART_2_INST                BOARD_ATK_MW1278D_UART_INST               /* UART2 外设 */
 #endif
 
 #ifndef UART_2_INST_INT_IRQN
-#define UART_2_INST_INT_IRQN       UART2_INT_IRQn      /* UART2 中断号 */
+#define UART_2_INST_INT_IRQN       BOARD_ATK_MW1278D_UART_INT_IRQN      /* UART2 中断�?*/
 #endif
 
-#define ATK_MW1278D_UART_INST          UART_2_INST         /* 使用的 UART 外设实例 */
+#define ATK_MW1278D_UART_INST          UART_2_INST         /* 使用�?UART 外设实例 */
 #define ATK_MW1278D_UART_INT_IRQN      UART_2_INST_INT_IRQN
 
-/* UART 接收缓冲区大小 */
+/* UART 接收缓冲区大�?*/
 #define ATK_MW1278D_UART_RX_BUF_SIZE   256
 #define ATK_MW1278D_UART_TX_BUF_SIZE   256
 
 /*===========================================================================
- * 定时器配置 (用于接收帧超时检测, 通过 SysConfig 配置)
+ * 定时器配�?(用于接收帧超时检�? 通过 SysConfig 配置)
  *===========================================================================*/
 
 #ifndef TIMER_0_INST
-#define TIMER_0_INST               TIMG0               /* 定时器外设 (GPTimer) */
+#define TIMER_0_INST               BOARD_ATK_MW1278D_TIMER_INST               /* 定时器外�?(GPTimer) */
 #endif
 
 #define ATK_MW1278D_TIMER_INST         TIMER_0_INST        /* 使用的定时器外设实例 */
@@ -95,7 +96,7 @@ extern "C" {
 #define ATK_MW1278D_AT_TIMEOUT         500
 
 /*===========================================================================
- * 使能状态枚举
+ * 使能状态枚�?
  *===========================================================================*/
 typedef enum
 {
@@ -119,7 +120,7 @@ typedef enum
  *===========================================================================*/
 typedef enum
 {
-    ATK_MW1278D_WORKMODE_NORMAL     = 0,   /* 一般模式 (默认) */
+    ATK_MW1278D_WORKMODE_NORMAL     = 0,   /* 一般模�?(默认) */
     ATK_MW1278D_WORKMODE_WAKEUP     = 1,   /* 唤醒模式 */
     ATK_MW1278D_WORKMODE_LOWPOWER   = 2,   /* 省电模式 */
     ATK_MW1278D_WORKMODE_SIGNAL     = 3,   /* 信号强度模式 */
@@ -152,12 +153,12 @@ typedef enum
  *===========================================================================*/
 typedef enum
 {
-    ATK_MW1278D_WLTIME_1S           = 0,   /* 1秒 (默认) */
-    ATK_MW1278D_WLTIME_2S           = 1,   /* 2秒 */
+    ATK_MW1278D_WLTIME_1S           = 0,   /* 1�?(默认) */
+    ATK_MW1278D_WLTIME_2S           = 1,   /* 2�?*/
 } atk_mw1278d_wltime_t;
 
 /*===========================================================================
- * 串口通信波特率枚举
+ * 串口通信波特率枚�?
  *===========================================================================*/
 typedef enum
 {
@@ -172,17 +173,17 @@ typedef enum
 } atk_mw1278d_uartrate_t;
 
 /*===========================================================================
- * 串口校验位枚举
+ * 串口校验位枚�?
  *===========================================================================*/
 typedef enum
 {
-    ATK_MW1278D_UARTPARI_NONE       = 0,   /* 无校验 (默认) */
-    ATK_MW1278D_UARTPARI_EVEN       = 1,   /* 偶校验 */
-    ATK_MW1278D_UARTPARI_ODD        = 2,   /* 奇校验 */
+    ATK_MW1278D_UARTPARI_NONE       = 0,   /* 无校�?(默认) */
+    ATK_MW1278D_UARTPARI_EVEN       = 1,   /* 偶校�?*/
+    ATK_MW1278D_UARTPARI_ODD        = 2,   /* 奇校�?*/
 } atk_mw1278d_uartpari_t;
 
 /*===========================================================================
- * 错误码定义
+ * 错误码定�?
  *===========================================================================*/
 #define ATK_MW1278D_EOK             0       /* 没有错误 */
 #define ATK_MW1278D_ERROR           1       /* 通用错误 */
@@ -195,30 +196,30 @@ typedef enum
  *===========================================================================*/
 
 /**
- * @brief   ATK-MW1278D 模块初始化
- * @param   baudrate: UART 通信波特率 (如 115200)
- * @retval  ATK_MW1278D_EOK   - 初始化成功
- *          ATK_MW1278D_ERROR - 初始化失败
+ * @brief   ATK-MW1278D 模块初始�?
+ * @param   baudrate: UART 通信波特�?(�?115200)
+ * @retval  ATK_MW1278D_EOK   - 初始化成�?
+ *          ATK_MW1278D_ERROR - 初始化失�?
  */
 uint8_t atk_mw1278d_init(uint32_t baudrate);
 
 /**
- * @brief   进入配置模式 (MD0 拉高, 可发送 AT 指令)
- * @param   无
- * @retval  无
+ * @brief   进入配置模式 (MD0 拉高, 可发�?AT 指令)
+ * @param   �?
+ * @retval  �?
  */
 void atk_mw1278d_enter_config(void);
 
 /**
- * @brief   退出配置模式 (MD0 拉低, 进入透传模式)
- * @param   无
- * @retval  无
+ * @brief   退出配置模�?(MD0 拉低, 进入透传模式)
+ * @param   �?
+ * @retval  �?
  */
 void atk_mw1278d_exit_config(void);
 
 /**
  * @brief   判断模块是否空闲 (AUX=0 空闲, AUX=1 忙碌)
- * @param   无
+ * @param   �?
  * @retval  ATK_MW1278D_EOK  - 模块空闲
  *          ATK_MW1278D_EBUSY - 模块忙碌
  */
@@ -229,25 +230,25 @@ uint8_t atk_mw1278d_free(void);
  *===========================================================================*/
 
 /**
- * @brief   发送 AT 指令并等待应答
- * @param   cmd    : 要发送的 AT 指令字符串
- *          ack    : 期望的应答关键字 (如 "OK"), 为 NULL 则不等待
+ * @brief   发�?AT 指令并等待应�?
+ * @param   cmd    : 要发送的 AT 指令字符�?
+ *          ack    : 期望的应答关键字 (�?"OK"), �?NULL 则不等待
  *          timeout: 等待超时时间 (毫秒)
  * @retval  ATK_MW1278D_EOK     - 收到期望应答
- *          ATK_MW1278D_ETIMEOUT - 超时未收到应答
+ *          ATK_MW1278D_ETIMEOUT - 超时未收到应�?
  */
 uint8_t atk_mw1278d_send_at_cmd(char *cmd, char *ack, uint32_t timeout);
 
 /**
- * @brief   AT 指令通讯测试 (发送 "AT" 等待 "OK")
- * @param   无
+ * @brief   AT 指令通讯测试 (发�?"AT" 等待 "OK")
+ * @param   �?
  * @retval  ATK_MW1278D_EOK   - 通讯正常
  *          ATK_MW1278D_ERROR - 通讯失败
  */
 uint8_t atk_mw1278d_at_test(void);
 
 /**
- * @brief   配置指令回显 (ATE0: 关闭回显, ATE1: 开启回显)
+ * @brief   配置指令回显 (ATE0: 关闭回显, ATE1: 开启回�?
  * @param   enable: ATK_MW1278D_DISABLE/ATK_MW1278D_ENABLE
  * @retval  ATK_MW1278D_EOK    - 配置成功
  *          ATK_MW1278D_ERROR  - 配置失败
@@ -257,14 +258,14 @@ uint8_t atk_mw1278d_echo_config(atk_mw1278d_enable_t enable);
 
 /**
  * @brief   软件复位模块
- * @param   无
+ * @param   �?
  * @retval  ATK_MW1278D_EOK   - 复位成功
  *          ATK_MW1278D_ERROR - 复位失败
  */
 uint8_t atk_mw1278d_sw_reset(void);
 
 /**
- * @brief   配置 Flash 保存 (AT+FLASH=0: 不保存, AT+FLASH=1: 保存)
+ * @brief   配置 Flash 保存 (AT+FLASH=0: 不保�? AT+FLASH=1: 保存)
  * @param   enable: ATK_MW1278D_DISABLE/ATK_MW1278D_ENABLE
  * @retval  ATK_MW1278D_EOK    - 配置成功
  *          ATK_MW1278D_ERROR  - 配置失败
@@ -274,7 +275,7 @@ uint8_t atk_mw1278d_flash_config(atk_mw1278d_enable_t enable);
 
 /**
  * @brief   恢复出厂设置
- * @param   无
+ * @param   �?
  * @retval  ATK_MW1278D_EOK   - 恢复成功
  *          ATK_MW1278D_ERROR - 恢复失败
  */
@@ -320,7 +321,7 @@ uint8_t atk_mw1278d_workmode_config(atk_mw1278d_workmode_t workmode);
 uint8_t atk_mw1278d_tmode_config(atk_mw1278d_tmode_t tmode);
 
 /**
- * @brief   配置无线速率和信道
+ * @brief   配置无线速率和信�?
  * @param   wlrate : 无线速率
  *          channel: 信道 (0 ~ 83)
  * @retval  ATK_MW1278D_EOK    - 配置成功
@@ -339,9 +340,9 @@ uint8_t atk_mw1278d_wlrate_channel_config(atk_mw1278d_wlrate_t wlrate, uint8_t c
 uint8_t atk_mw1278d_wltime_config(atk_mw1278d_wltime_t wltime);
 
 /**
- * @brief   配置模块串口参数 (修改后模块需要重新初始化 MCU 端 UART)
- * @param   baudrate: 波特率
- *          parity  : 校验位
+ * @brief   配置模块串口参数 (修改后模块需要重新初始化 MCU �?UART)
+ * @param   baudrate: 波特�?
+ *          parity  : 校验�?
  * @retval  ATK_MW1278D_EOK    - 配置成功
  *          ATK_MW1278D_ERROR  - 配置失败
  *          ATK_MW1278D_EINVAL - 参数无效
@@ -353,48 +354,48 @@ uint8_t atk_mw1278d_uart_config(atk_mw1278d_uartrate_t baudrate, atk_mw1278d_uar
  *===========================================================================*/
 
 /**
- * @brief   通过 LORA 模块发送数据 (UART printf 格式)
+ * @brief   通过 LORA 模块发送数�?(UART printf 格式)
  * @param   fmt: 格式化字符串
  *          ...: 可变参数
- * @retval  无
- * @note    该函数在透传模式下使用, 直接通过模块发送无线数据
+ * @retval  �?
+ * @note    该函数在透传模式下使�? 直接通过模块发送无线数�?
  */
 void atk_mw1278d_uart_printf(char *fmt, ...);
 
 /**
- * @brief   重新开始接收一帧数据
- * @param   无
- * @retval  无
+ * @brief   重新开始接收一帧数�?
+ * @param   �?
+ * @retval  �?
  */
 void atk_mw1278d_uart_rx_restart(void);
 
 /**
- * @brief   获取接收到的数据帧
- * @param   无
- * @retval  NULL: 未接收到完整帧
+ * @brief   获取接收到的数据�?
+ * @param   �?
+ * @retval  NULL: 未接收到完整�?
  *          其他: 指向接收缓冲区的指针
  */
 uint8_t *atk_mw1278d_uart_rx_get_frame(void);
 
 /**
- * @brief   获取接收到的数据帧长度
- * @param   无
- * @retval  0   : 未接收到完整帧
- *          其他: 帧长度
+ * @brief   获取接收到的数据帧长�?
+ * @param   �?
+ * @retval  0   : 未接收到完整�?
+ *          其他: 帧长�?
  */
 uint16_t atk_mw1278d_uart_rx_get_frame_len(void);
 
 /**
- * @brief   UART 中断服务函数 (需要在 UART ISR 中调用)
- * @param   无
- * @retval  无
+ * @brief   UART 中断服务函数 (需要在 UART ISR 中调�?
+ * @param   �?
+ * @retval  �?
  */
 void ATK_MW1278D_UART_IRQHandler(void);
 
 /**
- * @brief   定时器中断服务函数 (需要在 Timer ISR 中调用)
- * @param   无
- * @retval  无
+ * @brief   定时器中断服务函�?(需要在 Timer ISR 中调�?
+ * @param   �?
+ * @retval  �?
  */
 void ATK_MW1278D_TIM_IRQHandler(void);
 
@@ -403,3 +404,5 @@ void ATK_MW1278D_TIM_IRQHandler(void);
 #endif
 
 #endif /* __ATK_MW1278D_H */
+
+

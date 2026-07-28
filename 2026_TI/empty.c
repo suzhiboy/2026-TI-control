@@ -35,9 +35,13 @@
 #include "imu601.h"
 #include "oled.h"
 #include "vofa.h"
+#include "mt6701.h"
+#include "board_config.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
+static MT6701_Data mt6701;
+static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
 int main(void)
 {
@@ -51,12 +55,13 @@ int main(void)
     OLED_Clear();
     OLED_ShowLineString(1, 1, "OLED OK");
     OLED_Refresh();
-    delay_cycles(1600000);
+    delay_cycles(STARTUP_SPLASH_DELAY_CYCLES);
 
     LineTrack_Init();
     IMU601_init();
+    MT6701_Init(&mt6701);
 
-    NVIC_SetPriority(GPIOB_INT_IRQn, 0);
+    NVIC_SetPriority(GPIO_ENCODER_INT_IRQN, 0);
     NVIC_SetPriority(IMU601_INST_INT_IRQN, 1);
     NVIC_SetPriority(TIMER_0_INST_INT_IRQN, 2);
     NVIC_SetPriority(VOFA_INST_INT_IRQN, 3);
@@ -88,7 +93,14 @@ int main(void)
             OLED_ShowLineString(2, 1, oled_str);
             sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
             OLED_ShowLineString(3, 1, oled_str);
-            sprintf(oled_str, "B:%.1f E:%.1f", LineTrack_Get_BaseSpeed(), LineTrack_Get_Error());
+            mt6701_status = MT6701_Update(&mt6701);
+            if (mt6701_status == MT6701_OK) {
+                sprintf(oled_str, "MT:%.2f A%02X", mt6701.angle_deg,
+                    MT6701_GetActiveAddress());
+            } else {
+                sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
+                    MT6701_GetActiveAddress());
+            }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
         }

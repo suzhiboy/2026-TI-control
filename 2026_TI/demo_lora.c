@@ -79,20 +79,20 @@ void demo_lora_run(void)
     uint8_t ret;
     uint8_t *buf;
 
-    OLED_Show_String(1, 1, (uint8_t *)"LORA Init...");
+    OLED_ShowLineString(1, 1, "LORA Init...");
 
     /* 初始化 LORA 模块 (默认 115200 波特率) */
     ret = atk_mw1278d_init(115200);
     if (ret != ATK_MW1278D_EOK)
     {
-        OLED_Show_String(2, 1, (uint8_t *)"LORA Init FAIL!");
+        OLED_ShowLineString(2, 1, "LORA Init FAIL!");
         printf("[LORA] Init failed!\r\n");
         while (1)
         {
             delay_ms(500);
         }
     }
-    OLED_Show_String(2, 1, (uint8_t *)"LORA Init OK  ");
+    OLED_ShowLineString(2, 1, "LORA Init OK  ");
 
     /* 进入配置模式, 配置 LORA 模块参数 */
     atk_mw1278d_enter_config();
@@ -109,7 +109,7 @@ void demo_lora_run(void)
 
     if (ret != 0)
     {
-        OLED_Show_String(3, 1, "LORA Cfg FAIL!");
+        OLED_ShowLineString(3, 1, "LORA Cfg FAIL!");
         printf("[LORA] Config failed!\r\n");
         while (1)
         {
@@ -117,7 +117,7 @@ void demo_lora_run(void)
         }
     }
 
-    OLED_Show_String(3, 1, "LORA Cfg OK  ");
+    OLED_ShowLineString(3, 1, "LORA Cfg OK  ");
     printf("[LORA] Config success!\r\n");
 
     /* 清空接收缓冲区 */
@@ -131,8 +131,8 @@ void demo_lora_run(void)
         if (buf != NULL)
         {
             printf("[LORA RX]: %s\r\n", buf);
-            OLED_Show_String(4, 1, "                ");  /* 清除指定行 */
-            OLED_Show_String(4, 1, buf);
+            OLED_ShowLineString(4, 1, "                ");  /* 清除指定行 */
+            OLED_ShowLineString(4, 1, (const char *)buf);
 
             /* 重新开始接收下一帧 */
             atk_mw1278d_uart_rx_restart();
