@@ -16,8 +16,17 @@ typedef enum {
     VOFA_CMD_LOAD,
     VOFA_CMD_RESET,
     VOFA_CMD_GET,
-    VOFA_CMD_CLEAR_PID
+    VOFA_CMD_CLEAR_PID,
+    VOFA_CMD_MOTOR_TEST,
+    VOFA_CMD_MOTOR_STATUS
 } VofaCommandType;
+
+typedef enum {
+    VOFA_MOTOR_TEST_OFF = 0,
+    VOFA_MOTOR_TEST_LEFT,
+    VOFA_MOTOR_TEST_RIGHT,
+    VOFA_MOTOR_TEST_EXIT
+} VofaMotorTestSide;
 
 typedef enum {
     VOFA_PID_LINE = 0,
@@ -35,6 +44,7 @@ typedef struct {
     VofaCommandType type;
     VofaPidGroup pid_group;
     VofaPidTerm pid_term;
+    VofaMotorTestSide motor_test_side;
     float value;
 } VofaCommand;
 

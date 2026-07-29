@@ -16,6 +16,9 @@ static float filtered_L = 0.0f;
 static float filtered_R = 0.0f;
 static float line_left_pwm = 0.0f;
 static float line_right_pwm = 0.0f;
+static bool motor_test_mode = false;
+static int16_t motor_test_left_pwm = 0;
+static int16_t motor_test_right_pwm = 0;
 
 static float clamp_target_speed(float speed)
 {
@@ -119,12 +122,40 @@ void LineTrack_ClearPidState(void)
     PID_Clear(&pid_speed_R);
 }
 
+void LineTrack_SetMotorTest(int16_t left_pwm, int16_t right_pwm)
+{
+    motor_test_left_pwm = left_pwm;
+    motor_test_right_pwm = right_pwm;
+    motor_test_mode = true;
+    Encoder_Clear();
+    filtered_L = 0.0f;
+    filtered_R = 0.0f;
+    line_left_pwm = (float)motor_test_left_pwm;
+    line_right_pwm = (float)motor_test_right_pwm;
+    Set_Motor_Speed_Left(motor_test_left_pwm);
+    Set_Motor_Speed_Right(motor_test_right_pwm);
+}
+
+void LineTrack_ExitMotorTest(void)
+{
+    motor_test_mode = false;
+    LineTrack_Reset();
+}
+
 void LineTrack_Loop_10ms(void)
 {
     Encoder_UpdateData_10ms();
 
     filtered_L = filtered_L * 0.7f + (float)g_Encoder.speed_left * 0.3f;
     filtered_R = filtered_R * 0.7f + (float)g_Encoder.speed_right * 0.3f;
+
+    if (motor_test_mode) {
+        line_left_pwm = (float)motor_test_left_pwm;
+        line_right_pwm = (float)motor_test_right_pwm;
+        Set_Motor_Speed_Left(motor_test_left_pwm);
+        Set_Motor_Speed_Right(motor_test_right_pwm);
+        return;
+    }
 
     if (line_track_running) {
         line_error = Sensor_Get_Error();
