@@ -38,10 +38,19 @@
 #include "mt6701.h"
 #include "vision_uart.h"
 #include "board_config.h"
-#include "atk_lora_01.h"
+#include "balance_control.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
+static BalanceControl_t bc;
+
+/* PD42S1 步进电机 UART 写回调 (发送 F5H 指令使能 PWM 位置模式) */
+static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++) {
+        DL_UART_Main_transmitData(PD42S1_UART_INST, data[i]);
+    }
+}
 static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
@@ -53,6 +62,17 @@ int main(void)
     VisionBallData vision_ball;
 
     SYSCFG_DL_init();
+
+    BalanceControl_Init(&bc);
+    BalanceControl_PD42S1_Init(pd42s1_uart_write);
+    BalanceControl_SetReference(&bc, 0.0f);
+
+    /* 配置 PD42S1 PWM 输出: PA17 作为 TIMA1_CC0 */
+    DL_GPIO_initPeripheralOutputFunction(IOMUX_PINCM39,
+                                         IOMUX_PINCM39_PF_TIMA1_CCP0);
+    DL_Timer_setCCPDirection(PD42S1_PWM_INST, DL_TIMER_CC0_OUTPUT);
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, 1500U,
+                                    DL_TIMER_CC_0_INDEX);
 
     OLED_Init();
     OLED_Clear();
@@ -75,6 +95,9 @@ int main(void)
     VisionUart_Init();
 
     LineTrack_Start(LineTrack_Get_BaseSpeed());
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, 1500U,
+                                    DL_TIMER_CC_0_INDEX);
+    DL_Timer_startCounter(PD42S1_PWM_INST);
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
@@ -109,6 +132,8 @@ int main(void)
             }
             vision_ball = VisionUart_GetLatest();
             if (vision_ball.valid) {
+                BalanceControl_SetRawPosition(&bc,
+                    (float)vision_ball.x_mm / 10.0f);
                 sprintf(oled_str, "Ball:%dmm C%u", vision_ball.x_mm,
                     (unsigned)vision_ball.conf_percent);
             } else if (vision_ball.lost) {
@@ -125,15 +150,12 @@ void TIMER_0_INST_IRQHandler(void)
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
         case DL_TIMER_IIDX_ZERO:
             LineTrack_Loop_10ms();
+            BalanceControl_Run(&bc);
+            DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, bc.pwm_pulse,
+                                            DL_TIMER_CC_0_INDEX);
             control_ticks_10ms++;
             break;
         default:
             break;
     }
-}
-
-/* ======== ATK-LORA-01 帧超时定时器中断 (TIMA1, 10ms) ======== */
-void LORA_TIMER_INST_IRQHandler(void)
-{
-    ATK_LORA_01_TIM_IRQHandler();
 }

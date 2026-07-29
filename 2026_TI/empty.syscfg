@@ -22,10 +22,12 @@ const PWM1   = PWM.addInstance();
 const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL");
 const TIMER  = scripting.addModule("/ti/driverlib/TIMER", {}, false);
 const TIMER1 = TIMER.addInstance();
+const TIMER2 = TIMER.addInstance();
 const UART   = scripting.addModule("/ti/driverlib/UART", {}, false);
 const UART1  = UART.addInstance();
 const UART2  = UART.addInstance();
 const UART3  = UART.addInstance();
+const UART4  = UART.addInstance();
 
 /**
  * Write custom configuration values to the imported modules.
@@ -155,6 +157,11 @@ TIMER1.timerMode        = "PERIODIC";
 TIMER1.timerPeriod      = "10 ms";
 TIMER1.timerClkPrescale = 256;
 
+TIMER2.$name            = "PD42S1_PWM";
+TIMER2.timerMode        = "PERIODIC_UP";
+TIMER2.timerPeriod      = "20 ms";
+TIMER2.timerClkPrescale = 32;
+
 UART1.$name                            = "VOFA";
 UART1.targetBaudRate                   = 115200;
 UART1.enabledInterrupts                = ["RX"];
@@ -206,6 +213,12 @@ UART3.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
 UART3.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
 UART3.rxPinConfig.enableConfig         = true;
 UART3.rxPinConfig.internalResistor     = "NONE";
+
+UART4.$name                            = "PD42S1_UART";
+UART4.targetBaudRate                   = 115200;
+UART4.enabledInterrupts                = [];
+UART4.peripheral.$assign               = "UART1";
+UART4.peripheral.txPin.$assign         = "PB6";
 
 /**
  * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
