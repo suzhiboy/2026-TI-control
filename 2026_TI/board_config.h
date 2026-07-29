@@ -75,4 +75,45 @@
 #define TM1637_DIO_IOMUX               IOMUX_PINCM10
 #endif
 
+/*
+ * 4 键菜单系统 按键引脚定义
+ *
+ * K1 (PB12): 上一个任务  — 独立 GPIO
+ * K2 (PB13): 下一个任务  — 与循迹 AD2 分时复用, RUNNING 时不响应
+ * K3 (PB2):  调目标点    — 原 IMU601 TX
+ * K4 (PB3):  确认/启动   — 原 IMU601 RX
+ */
+
+#ifndef KEY_K1_PORT
+#define KEY_K1_PORT     GPIOB
+#endif
+
+#ifndef KEY_K1_PIN
+#define KEY_K1_PIN      DL_GPIO_PIN_12
+#endif
+
+#ifndef KEY_K2_PORT
+#define KEY_K2_PORT     GPIOB
+#endif
+
+#ifndef KEY_K2_PIN
+#define KEY_K2_PIN      DL_GPIO_PIN_13
+#endif
+
+#ifndef KEY_K3_PORT
+#define KEY_K3_PORT     GPIOB
+#endif
+
+#ifndef KEY_K3_PIN
+#define KEY_K3_PIN      DL_GPIO_PIN_2
+#endif
+
+#ifndef KEY_K4_PORT
+#define KEY_K4_PORT     GPIOB
+#endif
+
+#ifndef KEY_K4_PIN
+#define KEY_K4_PIN      DL_GPIO_PIN_3
+#endif
+
 #endif /* BOARD_CONFIG_H */

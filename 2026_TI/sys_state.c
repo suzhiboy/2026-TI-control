@@ -1,28 +1,28 @@
 /*
- * sys_state.c — 系统状态机实现
+ * sys_state.c — 控制算法调度状态机实现
  */
 
 #include "sys_state.h"
 
-volatile SysState g_sys_state = STATE_IDLE;
+volatile ControlState g_control_state = CONTROL_IDLE;
 
-void SysState_Set(SysState new_state)
+void ControlState_Set(ControlState new_state)
 {
-    g_sys_state = new_state;
+    g_control_state = new_state;
 }
 
-SysState SysState_Get(void)
+ControlState ControlState_Get(void)
 {
-    return g_sys_state;
+    return g_control_state;
 }
 
-const char* SysState_Name(SysState s)
+const char* ControlState_Name(ControlState s)
 {
     switch (s) {
-        case STATE_IDLE:         return "IDLE";
-        case STATE_TRACK_ONLY:   return "TRACK_ONLY";
-        case STATE_STATIC_BALL:  return "STATIC_BALL";
-        case STATE_DYNAMIC_BALL: return "DYNAMIC_BALL";
-        default:                 return "???";
+        case CONTROL_IDLE:         return "IDLE";
+        case CONTROL_TRACK_ONLY:   return "TRACK_ONLY";
+        case CONTROL_STATIC_BALL:  return "STATIC_BALL";
+        case CONTROL_DYNAMIC_BALL: return "DYNAMIC_BALL";
+        default:                   return "???";
     }
 }
