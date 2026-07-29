@@ -38,6 +38,9 @@ MAX_BOXES_NUM = 10
 MAX_JUMP_MM = 30
 LOST_FRAME_LIMIT = 3
 SEND_EVERY_N_FRAMES = 1
+TERMINAL_PRINT_EVERY_N_FRAMES = 5
+LOST_SEND_EVERY_N_FRAMES = 5
+DEBUG_FRAME_STATUS = True
 
 
 def file_exists(path):
@@ -154,12 +157,39 @@ def choose_best_detection(result):
     return best, best_score
 
 
-def send_ball(uart, seq, x_mm, conf, fps):
+def send_ball(uart, seq, x_mm, conf, fps, log=False):
     uart_send(uart, "BALL,{},{},{:.2f},{}\n".format(seq, x_mm, conf, int(fps)))
+    if log:
+        print(
+            "K230_BALL seq={} x_mm={} conf={:.2f} fps={} sent=1".format(
+                seq, x_mm, conf, int(fps)
+            )
+        )
 
 
-def send_lost(uart, seq):
+def send_lost(uart, seq, log=False):
     uart_send(uart, "BALL_LOST,{}\n".format(seq))
+    if log:
+        print("K230_BALL_LOST seq={} sent=1".format(seq))
+
+
+def print_frame_status(frame_id, fps, seen, cx, x_mm, conf, lost_frames, sent):
+    if not DEBUG_FRAME_STATUS:
+        return
+    if frame_id % TERMINAL_PRINT_EVERY_N_FRAMES != 0:
+        return
+    if seen:
+        print(
+            "K230_FRAME id={} fps={} seen=1 cx={} x_mm={} conf={:.2f} lost_frames={} sent={}".format(
+                frame_id, int(fps), int(cx), x_mm, conf, lost_frames, sent
+            )
+        )
+    else:
+        print(
+            "K230_FRAME id={} fps={} seen=0 lost_frames={} sent={}".format(
+                frame_id, int(fps), lost_frames, sent
+            )
+        )
 
 
 def main():
@@ -169,7 +199,6 @@ def main():
     seq = 0
     lost_frames = 0
     last_x_mm = None
-    lost_reported = False
 
     try:
         display_mode, display_size, sensor = get_display_config(DISPLAY)
@@ -206,6 +235,9 @@ def main():
             pl.show_image()
 
             frame_id += 1
+            sent = 0
+            seen = False
+            x_mm = None
             det, conf = choose_best_detection(result)
             cx = detection_center_x(det) if det is not None else None
 
@@ -214,20 +246,25 @@ def main():
                 if last_x_mm is not None and abs(x_mm - last_x_mm) > MAX_JUMP_MM:
                     lost_frames += 1
                 else:
+                    seen = True
                     last_x_mm = x_mm
                     lost_frames = 0
-                    lost_reported = False
                     if frame_id % SEND_EVERY_N_FRAMES == 0:
                         seq = (seq + 1) & 0xFFFF
                         send_ball(uart, seq, x_mm, conf, clock.fps())
+                        sent = 1
             else:
                 lost_frames += 1
 
-            if lost_frames >= LOST_FRAME_LIMIT and not lost_reported:
+            if lost_frames >= LOST_FRAME_LIMIT and frame_id % LOST_SEND_EVERY_N_FRAMES == 0:
                 seq = (seq + 1) & 0xFFFF
                 send_lost(uart, seq)
-                lost_reported = True
+                sent = 1
                 last_x_mm = None
+
+            print_frame_status(
+                frame_id, clock.fps(), seen, cx, x_mm, conf, lost_frames, sent
+            )
 
             gc.collect()
 

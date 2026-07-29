@@ -39,6 +39,7 @@
 #include "vision_uart.h"
 #include "board_config.h"
 #include "atk_lora_01.h"
+#include "key_menu.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
@@ -73,6 +74,7 @@ int main(void)
 
     Vofa_Init();
     VisionUart_Init();
+    KeyMenu_Init();
 
     LineTrack_Start(LineTrack_Get_BaseSpeed());
     DL_Timer_startCounter(TIMER_0_INST);
@@ -85,6 +87,14 @@ int main(void)
         Vofa_Poll();
         VisionUart_Poll(control_ticks_10ms);
 
+        /* ---- 运行当前任务 (RUNNING 态) ---- */
+        if (KeyMenu_GetState() == SYS_RUNNING) {
+            const TaskDef *task = KeyMenu_GetCurrentTask();
+            if (task && task->run) {
+                task->run();
+            }
+        }
+
         now = control_ticks_10ms;
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
@@ -93,26 +103,24 @@ int main(void)
 
         if ((uint32_t)(now - last_oled_tick) >= 10U) {
             last_oled_tick = now;
-            sprintf(oled_str, "Yaw: %.2f", current_attitude.yaw);
-            OLED_ShowLineString(1, 1, oled_str);
-            sprintf(oled_str, "Pitch: %.2f", current_attitude.pitch);
-            OLED_ShowLineString(2, 1, oled_str);
-            sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
-            OLED_ShowLineString(3, 1, oled_str);
+
+            /* ---- 菜单信息 (Line 1~3) ---- */
+            KeyMenu_OLED();
+
+            /* ---- Line 4: 小球 / 传感器保留 ---- */
             mt6701_status = MT6701_Update(&mt6701);
-            if (mt6701_status == MT6701_OK) {
-                sprintf(oled_str, "MT:%.2f A%02X", mt6701.angle_deg,
-                    MT6701_GetActiveAddress());
-            } else {
-                sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
-                    MT6701_GetActiveAddress());
-            }
             vision_ball = VisionUart_GetLatest();
             if (vision_ball.valid) {
                 sprintf(oled_str, "Ball:%dmm C%u", vision_ball.x_mm,
                     (unsigned)vision_ball.conf_percent);
             } else if (vision_ball.lost) {
                 sprintf(oled_str, "Ball:LOST");
+            } else if (mt6701_status == MT6701_OK) {
+                sprintf(oled_str, "MT:%.2f A%02X", mt6701.angle_deg,
+                    MT6701_GetActiveAddress());
+            } else {
+                sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
+                    MT6701_GetActiveAddress());
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
@@ -125,6 +133,7 @@ void TIMER_0_INST_IRQHandler(void)
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
         case DL_TIMER_IIDX_ZERO:
             LineTrack_Loop_10ms();
+            KeyMenu_Scan();
             control_ticks_10ms++;
             break;
         default:

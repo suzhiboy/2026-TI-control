@@ -41,8 +41,6 @@
 #include "ti_msp_dl_config.h"
 
 DL_TimerA_backupConfig gTIMER_0Backup;
-DL_TimerA_backupConfig gLORA_TIMERBackup;
-DL_UART_Main_backupConfig gIMU601Backup;
 
 /*
  *  ======== SYSCFG_DL_init ========
@@ -56,17 +54,15 @@ SYSCONFIG_WEAK void SYSCFG_DL_init(void)
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_PWM_MOTOR_init();
     SYSCFG_DL_TIMER_0_init();
-    SYSCFG_DL_LORA_TIMER_init();
     SYSCFG_DL_OLED_init();
     SYSCFG_DL_MT6701_I2C_init();
     SYSCFG_DL_VOFA_init();
     SYSCFG_DL_IMU601_init();
-    SYSCFG_DL_LORA_UART_init();
+    SYSCFG_DL_VISION_UART_init();
     /* Ensure backup structures have no valid state */
 
 	gTIMER_0Backup.backupRdy 	= false;
-	gLORA_TIMERBackup.backupRdy 	= false;
-	gIMU601Backup.backupRdy 	= false;
+
 
 }
 /*
@@ -78,8 +74,6 @@ SYSCONFIG_WEAK bool SYSCFG_DL_saveConfiguration(void)
     bool retStatus = true;
 
 	retStatus &= DL_TimerA_saveConfiguration(TIMER_0_INST, &gTIMER_0Backup);
-	retStatus &= DL_TimerA_saveConfiguration(LORA_TIMER_INST, &gLORA_TIMERBackup);
-	retStatus &= DL_UART_Main_saveConfiguration(IMU601_INST, &gIMU601Backup);
 
     return retStatus;
 }
@@ -90,8 +84,6 @@ SYSCONFIG_WEAK bool SYSCFG_DL_restoreConfiguration(void)
     bool retStatus = true;
 
 	retStatus &= DL_TimerA_restoreConfiguration(TIMER_0_INST, &gTIMER_0Backup, false);
-	retStatus &= DL_TimerA_restoreConfiguration(LORA_TIMER_INST, &gLORA_TIMERBackup, false);
-	retStatus &= DL_UART_Main_restoreConfiguration(IMU601_INST, &gIMU601Backup);
 
     return retStatus;
 }
@@ -102,23 +94,21 @@ SYSCONFIG_WEAK void SYSCFG_DL_initPower(void)
     DL_GPIO_reset(GPIOB);
     DL_TimerG_reset(PWM_MOTOR_INST);
     DL_TimerA_reset(TIMER_0_INST);
-    DL_TimerA_reset(LORA_TIMER_INST);
     DL_I2C_reset(OLED_INST);
     DL_I2C_reset(MT6701_I2C_INST);
     DL_UART_Main_reset(VOFA_INST);
     DL_UART_Main_reset(IMU601_INST);
-    DL_UART_Main_reset(LORA_UART_INST);
+    DL_UART_Main_reset(VISION_UART_INST);
 
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_TimerG_enablePower(PWM_MOTOR_INST);
     DL_TimerA_enablePower(TIMER_0_INST);
-    DL_TimerA_enablePower(LORA_TIMER_INST);
     DL_I2C_enablePower(OLED_INST);
     DL_I2C_enablePower(MT6701_I2C_INST);
     DL_UART_Main_enablePower(VOFA_INST);
     DL_UART_Main_enablePower(IMU601_INST);
-    DL_UART_Main_enablePower(LORA_UART_INST);
+    DL_UART_Main_enablePower(VISION_UART_INST);
     delay_cycles(POWER_STARTUP_DELAY);
 }
 
@@ -165,9 +155,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
     DL_GPIO_initPeripheralInputFunction(
         GPIO_IMU601_IOMUX_RX, GPIO_IMU601_IOMUX_RX_FUNC);
     DL_GPIO_initPeripheralOutputFunction(
-        GPIO_LORA_UART_IOMUX_TX, GPIO_LORA_UART_IOMUX_TX_FUNC);
-    DL_GPIO_initPeripheralInputFunction(
-        GPIO_LORA_UART_IOMUX_RX, GPIO_LORA_UART_IOMUX_RX_FUNC);
+        GPIO_VISION_UART_IOMUX_TX, GPIO_VISION_UART_IOMUX_TX_FUNC);
+    
+	DL_GPIO_initPeripheralInputFunctionFeatures(
+		 GPIO_VISION_UART_IOMUX_RX, GPIO_VISION_UART_IOMUX_RX_FUNC,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
     DL_GPIO_initDigitalOutput(GPIO_ELECTROMAGNET_CTRL_IOMUX);
 
@@ -205,12 +198,24 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
 		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
+    DL_GPIO_initDigitalInputFeatures(GPIO_KEY_K1_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+
+    DL_GPIO_initDigitalInputFeatures(GPIO_KEY_K3_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+
+    DL_GPIO_initDigitalInputFeatures(GPIO_KEY_K4_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+
     DL_GPIO_clearPins(GPIOA, GPIO_ELECTROMAGNET_CTRL_PIN |
 		GPIO_MOTOR_BIN1_PIN);
     DL_GPIO_enableOutput(GPIOA, GPIO_ELECTROMAGNET_CTRL_PIN |
 		GPIO_MOTOR_BIN1_PIN);
-    DL_GPIO_setUpperPinsPolarity(GPIOA, DL_GPIO_PIN_25_EDGE_RISE_FALL |
-		DL_GPIO_PIN_26_EDGE_RISE_FALL);
+    DL_GPIO_setUpperPinsPolarity(GPIOA, DL_GPIO_PIN_26_EDGE_RISE_FALL |
+		DL_GPIO_PIN_25_EDGE_RISE_FALL);
     DL_GPIO_clearInterruptStatus(GPIOA, GPIO_ENCODER_QEI_LEFT_A_PIN |
 		GPIO_ENCODER_QEI_RIGHT_A_PIN);
     DL_GPIO_enableInterrupt(GPIOA, GPIO_ENCODER_QEI_LEFT_A_PIN |
@@ -331,43 +336,6 @@ SYSCONFIG_WEAK void SYSCFG_DL_TIMER_0_init(void) {
         (DL_TimerA_TimerConfig *) &gTIMER_0TimerConfig);
     DL_TimerA_enableInterrupt(TIMER_0_INST , DL_TIMERA_INTERRUPT_ZERO_EVENT);
     DL_TimerA_enableClock(TIMER_0_INST);
-
-
-
-
-
-}
-
-/*
- * Timer clock configuration to be sourced by BUSCLK /  (32000000 Hz)
- * timerClkFreq = (timerClkSrc / (timerClkDivRatio * (timerClkPrescale + 1)))
- *   125000 Hz = 32000000 Hz / (1 * (255 + 1))
- */
-static const DL_TimerA_ClockConfig gLORA_TIMERClockConfig = {
-    .clockSel    = DL_TIMER_CLOCK_BUSCLK,
-    .divideRatio = DL_TIMER_CLOCK_DIVIDE_1,
-    .prescale    = 255U,
-};
-
-/*
- * Timer load value (where the counter starts from) is calculated as (timerPeriod * timerClockFreq) - 1
- * LORA_TIMER_INST_LOAD_VALUE = (10 ms * 125000 Hz) - 1
- */
-static const DL_TimerA_TimerConfig gLORA_TIMERTimerConfig = {
-    .period     = LORA_TIMER_INST_LOAD_VALUE,
-    .timerMode  = DL_TIMER_TIMER_MODE_PERIODIC,
-    .startTimer = DL_TIMER_STOP,
-};
-
-SYSCONFIG_WEAK void SYSCFG_DL_LORA_TIMER_init(void) {
-
-    DL_TimerA_setClockConfig(LORA_TIMER_INST,
-        (DL_TimerA_ClockConfig *) &gLORA_TIMERClockConfig);
-
-    DL_TimerA_initTimerMode(LORA_TIMER_INST,
-        (DL_TimerA_TimerConfig *) &gLORA_TIMERTimerConfig);
-    DL_TimerA_enableInterrupt(LORA_TIMER_INST , DL_TIMERA_INTERRUPT_ZERO_EVENT);
-    DL_TimerA_enableClock(LORA_TIMER_INST);
 
 
 
@@ -505,12 +473,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_IMU601_init(void)
 
     DL_UART_Main_enable(IMU601_INST);
 }
-static const DL_UART_Main_ClockConfig gLORA_UARTClockConfig = {
+static const DL_UART_Main_ClockConfig gVISION_UARTClockConfig = {
     .clockSel    = DL_UART_MAIN_CLOCK_BUSCLK,
     .divideRatio = DL_UART_MAIN_CLOCK_DIVIDE_RATIO_1
 };
 
-static const DL_UART_Main_Config gLORA_UARTConfig = {
+static const DL_UART_Main_Config gVISION_UARTConfig = {
     .mode        = DL_UART_MAIN_MODE_NORMAL,
     .direction   = DL_UART_MAIN_DIRECTION_TX_RX,
     .flowControl = DL_UART_MAIN_FLOW_CONTROL_NONE,
@@ -519,25 +487,25 @@ static const DL_UART_Main_Config gLORA_UARTConfig = {
     .stopBits    = DL_UART_MAIN_STOP_BITS_ONE
 };
 
-SYSCONFIG_WEAK void SYSCFG_DL_LORA_UART_init(void)
+SYSCONFIG_WEAK void SYSCFG_DL_VISION_UART_init(void)
 {
-    DL_UART_Main_setClockConfig(LORA_UART_INST, (DL_UART_Main_ClockConfig *) &gLORA_UARTClockConfig);
+    DL_UART_Main_setClockConfig(VISION_UART_INST, (DL_UART_Main_ClockConfig *) &gVISION_UARTClockConfig);
 
-    DL_UART_Main_init(LORA_UART_INST, (DL_UART_Main_Config *) &gLORA_UARTConfig);
+    DL_UART_Main_init(VISION_UART_INST, (DL_UART_Main_Config *) &gVISION_UARTConfig);
     /*
      * Configure baud rate by setting oversampling and baud rate divisors.
      *  Target baud rate: 115200
      *  Actual baud rate: 115211.52
      */
-    DL_UART_Main_setOversampling(LORA_UART_INST, DL_UART_OVERSAMPLING_RATE_16X);
-    DL_UART_Main_setBaudRateDivisor(LORA_UART_INST, LORA_UART_IBRD_32_MHZ_115200_BAUD, LORA_UART_FBRD_32_MHZ_115200_BAUD);
+    DL_UART_Main_setOversampling(VISION_UART_INST, DL_UART_OVERSAMPLING_RATE_16X);
+    DL_UART_Main_setBaudRateDivisor(VISION_UART_INST, VISION_UART_IBRD_32_MHZ_115200_BAUD, VISION_UART_FBRD_32_MHZ_115200_BAUD);
 
 
     /* Configure Interrupts */
-    DL_UART_Main_enableInterrupt(LORA_UART_INST,
+    DL_UART_Main_enableInterrupt(VISION_UART_INST,
                                  DL_UART_MAIN_INTERRUPT_RX);
 
 
-    DL_UART_Main_enable(LORA_UART_INST);
+    DL_UART_Main_enable(VISION_UART_INST);
 }
 

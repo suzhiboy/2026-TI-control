@@ -100,7 +100,7 @@
 #define BOARD_ATK_LORA_01_MD0_PIN       DL_GPIO_PIN_0
 #endif
 
-/* PB0 = IOMUX_PINCM12 (不是 PINCM16! PINCM16=PB3=IMU601_RX) */
+/* PB0 = IOMUX_PINCM12 (not IMU601 RX; IMU601 now uses UART1 RX on PB7) */
 #ifndef BOARD_ATK_LORA_01_MD0_IOMUX
 #define BOARD_ATK_LORA_01_MD0_IOMUX     IOMUX_PINCM12
 #endif
@@ -142,5 +142,49 @@
 #define BOARD_ATK_MW1278D_UART_INST     BOARD_ATK_LORA_01_UART_INST
 #define BOARD_ATK_MW1278D_UART_INT_IRQN BOARD_ATK_LORA_01_UART_INT_IRQN
 #define BOARD_ATK_MW1278D_TIMER_INST    BOARD_ATK_LORA_01_TIMER_INST
+
+/*
+ * 4 键菜单系统 按键引脚定义
+ *
+ * K1 (PB12): 上一个任务  — 独立 GPIO
+ * K2 (PB13): 下一个任务  — 与循迹 AD2 分时复用, RUNNING 时不响应
+ * K3 (PB2):  调目标点    — 原 IMU601 TX, syscfg 再生后释放
+ * K4 (PB3):  确认/启动   — 原 IMU601 RX, syscfg 再生后释放
+ *
+ * 注意: PB2/PB3 需要在 SysConfig 中将 IMU601 从 UART3 移到 UART1(PB6/PB7)
+ *       并重新生成 ti_msp_dl_config.c/h 后方可作为 GPIO 使用.
+ */
+
+#ifndef KEY_K1_PORT
+#define KEY_K1_PORT     GPIOB
+#endif
+
+#ifndef KEY_K1_PIN
+#define KEY_K1_PIN      DL_GPIO_PIN_12
+#endif
+
+#ifndef KEY_K2_PORT
+#define KEY_K2_PORT     GPIOB
+#endif
+
+#ifndef KEY_K2_PIN
+#define KEY_K2_PIN      DL_GPIO_PIN_13
+#endif
+
+#ifndef KEY_K3_PORT
+#define KEY_K3_PORT     GPIOB
+#endif
+
+#ifndef KEY_K3_PIN
+#define KEY_K3_PIN      DL_GPIO_PIN_2
+#endif
+
+#ifndef KEY_K4_PORT
+#define KEY_K4_PORT     GPIOB
+#endif
+
+#ifndef KEY_K4_PIN
+#define KEY_K4_PIN      DL_GPIO_PIN_3
+#endif
 
 #endif /* BOARD_CONFIG_H */
