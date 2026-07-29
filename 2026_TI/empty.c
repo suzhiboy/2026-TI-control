@@ -39,11 +39,22 @@
 #include "vision_uart.h"
 #include "board_config.h"
 #include "balance_control.h"
+#include "sys_state.h"
+#include "encoder.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
+
+/* 循迹一圈参数 (赛道 ~6.14m, 留 2% 余量确保过线后停) */
+#define TRACK_LAP_DISTANCE_CM        (614.0f)
+#define TRACK_LAP_STOP_MARGIN_CM     (12.0f)    /* 超量后多走 12cm 防止提前停 */
+static float g_lap_start_distance = 0.0f;
+static bool  g_lap_completed = false;
+
+/* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
+#define VISION_LOST_TIMEOUT_TICKS  50U
 
 /* PD42S1 步进电机 UART 写回调 (发送 F5H 指令使能 PWM 位置模式) */
 static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
@@ -101,6 +112,11 @@ int main(void)
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
+    /* ========== 启动: 进入循迹 + 调球模式, 记录起始里程 ========== */
+    SysState_Set(STATE_DYNAMIC_BALL);
+    g_lap_start_distance = g_Encoder.distance_cm;
+    g_lap_completed = false;
+
     while (1) {
         uint32_t now;
 
@@ -113,6 +129,15 @@ int main(void)
         if (g_vision_ball.valid) {
             BalanceControl_SetRawPosition(&bc,
                 (float)g_vision_ball.x_mm / 10.0f);
+        }
+
+        /* ========== 循迹一圈完成检测 ========== */
+        if (g_sys_state == STATE_DYNAMIC_BALL && !g_lap_completed) {
+            float traveled = g_Encoder.distance_cm - g_lap_start_distance;
+            if (traveled >= (TRACK_LAP_DISTANCE_CM + TRACK_LAP_STOP_MARGIN_CM)) {
+                g_lap_completed = true;
+                SysState_Set(STATE_IDLE);
+            }
         }
 
         now = control_ticks_10ms;
@@ -149,28 +174,52 @@ int main(void)
     }
 }
 
-/* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
-#define VISION_LOST_TIMEOUT_TICKS  50U
-
 void TIMER_0_INST_IRQHandler(void)
 {
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
         case DL_TIMER_IIDX_ZERO: {
             static uint32_t lost_ticks = 0;
+            bool need_balance = false;
 
-            LineTrack_Loop_10ms();
+            /* ========== 状态机调度 ========== */
+            switch (g_sys_state) {
 
-            /* 安全降级: 丢球或超时 -> 清除积分并回平 */
-            if (g_vision_ball.valid) {
-                lost_ticks = 0;
-                BalanceControl_Run(&bc);
-            } else {
-                if (lost_ticks < VISION_LOST_TIMEOUT_TICKS) {
-                    lost_ticks++;
-                    BalanceControl_Run(&bc);
-                } else {
+                case STATE_IDLE:
+                    LineTrack_Stop();
                     BalanceControl_Reset(&bc);
                     bc.pwm_pulse = 1500U;
+                    break;
+
+                case STATE_TRACK_ONLY:
+                    LineTrack_Loop_10ms();
+                    BalanceControl_Reset(&bc);
+                    bc.pwm_pulse = 1500U;
+                    break;
+
+                case STATE_STATIC_BALL:
+                    LineTrack_Stop();
+                    need_balance = true;
+                    break;
+
+                case STATE_DYNAMIC_BALL:
+                    LineTrack_Loop_10ms();
+                    need_balance = true;
+                    break;
+            }
+
+            if (need_balance) {
+                /* 安全降级: 丢球超时则清除积分并回平 */
+                if (g_vision_ball.valid) {
+                    lost_ticks = 0;
+                    BalanceControl_Run(&bc);
+                } else {
+                    if (lost_ticks < VISION_LOST_TIMEOUT_TICKS) {
+                        lost_ticks++;
+                        BalanceControl_Run(&bc);
+                    } else {
+                        BalanceControl_Reset(&bc);
+                        bc.pwm_pulse = 1500U;
+                    }
                 }
             }
 
