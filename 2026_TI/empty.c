@@ -41,27 +41,26 @@
 #include "balance_control.h"
 #include "sys_state.h"
 #include "encoder.h"
-#include "key_menu.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
 
-/* 循迹一圈参数 (赛道 ~6.14m, 留余量确保过线后停) */
+/* 循迹一圈参数 (赛道 ~6.14m, 留 2% 余量确保过线后停) */
 #define TRACK_LAP_DISTANCE_CM        (614.0f)
-#define TRACK_LAP_STOP_MARGIN_CM     (12.0f)
+#define TRACK_LAP_STOP_MARGIN_CM     (12.0f)    /* 超量后多走 12cm 防止提前停 */
 static float g_lap_start_distance = 0.0f;
 static bool  g_lap_completed = false;
 
-/* 丢球超时阈值 (50 ticks x 10ms = 500ms 未收到有效数据触发) */
+/* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
 
 /* PD42S1 步进电机 UART 写回调 (发送 F5H 指令使能 PWM 位置模式) */
 static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i++) {
-        DL_UART_Main_transmitData(IMU601_INST, data[i]);
+        DL_UART_Main_transmitData(PD42S1_UART_INST, data[i]);
     }
 }
 static MT6701_Data mt6701;
@@ -114,9 +113,9 @@ int main(void)
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
-    /* ========== 初始 IDLE, 等待菜单系统启动任务 ========== */
-    ControlState_Set(CONTROL_IDLE);
-    g_lap_start_distance = -1.0f;   /* 负值表示未记录起始里程 */
+    /* ========== 启动: 进入循迹 + 调球模式, 记录起始里程 ========== */
+    SysState_Set(STATE_DYNAMIC_BALL);
+    g_lap_start_distance = g_Encoder.distance_cm;
     g_lap_completed = false;
 
     while (1) {
@@ -133,32 +132,13 @@ int main(void)
                 (float)g_vision_ball.x_mm / 10.0f);
         }
 
-        /* ---- 运行当前任务 (按键菜单 RUNNING 态) ---- */
-        if (KeyMenu_GetState() == SYS_RUNNING) {
-            const TaskDef *task = KeyMenu_GetCurrentTask();
-            if (task && task->run) {
-                task->run();
-            }
-        }
-
         /* ========== 循迹一圈完成检测 ========== */
-        if (g_control_state == CONTROL_DYNAMIC_BALL) {
-            /* 首次进入 DYNAMIC_BALL 时记录起始里程 */
-            if (g_lap_start_distance < 0.0f) {
-                g_lap_start_distance = g_Encoder.distance_cm;
-                g_lap_completed = false;
+        if (g_sys_state == STATE_DYNAMIC_BALL && !g_lap_completed) {
+            float traveled = g_Encoder.distance_cm - g_lap_start_distance;
+            if (traveled >= (TRACK_LAP_DISTANCE_CM + TRACK_LAP_STOP_MARGIN_CM)) {
+                g_lap_completed = true;
+                SysState_Set(STATE_IDLE);
             }
-            if (!g_lap_completed) {
-                float traveled = g_Encoder.distance_cm - g_lap_start_distance;
-                if (traveled >= (TRACK_LAP_DISTANCE_CM + TRACK_LAP_STOP_MARGIN_CM)) {
-                    g_lap_completed = true;
-                    ControlState_Set(CONTROL_IDLE);
-                }
-            }
-        } else {
-            /* 离开 DYNAMIC_BALL → 重置, 下次进入重新计数 */
-            g_lap_start_distance = -1.0f;
-            g_lap_completed = false;
         }
 
         now = control_ticks_10ms;
@@ -173,13 +153,32 @@ int main(void)
             /* ---- 菜单信息 (Line 1~3) ---- */
             KeyMenu_OLED();
 
-            /* ---- Line 4: 小球 / 传感器 ---- */
+            /* ---- Line 4: 小球 / 传感器保留 ---- */
+            sprintf(oled_str, "Yaw: %.2f", current_attitude.yaw);
+            OLED_ShowLineString(1, 1, oled_str);
+            sprintf(oled_str, "Pitch: %.2f", current_attitude.pitch);
+            OLED_ShowLineString(2, 1, oled_str);
+            sprintf(oled_str, "Roll: %.2f", current_attitude.roll);
+            OLED_ShowLineString(3, 1, oled_str);
             mt6701_status = MT6701_Update(&mt6701);
+            if (mt6701_status == MT6701_OK) {
+                sprintf(oled_str, "MT:%.2f A%02X", mt6701.angle_deg,
+                    MT6701_GetActiveAddress());
+            } else {
+                sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
+                    MT6701_GetActiveAddress());
+            }
             if (g_vision_ball.valid) {
                 sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
                     (unsigned)g_vision_ball.conf_percent);
             } else {
-                sprintf(oled_str, "ball:LOST");
+                sprintf(oled_str, "Ball:LOST");
+            } else if (mt6701_status == MT6701_OK) {
+                sprintf(oled_str, "MT:%.2f A%02X", mt6701.angle_deg,
+                    MT6701_GetActiveAddress());
+            } else {
+                sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
+                    MT6701_GetActiveAddress());
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
@@ -194,30 +193,27 @@ void TIMER_0_INST_IRQHandler(void)
             static uint32_t lost_ticks = 0;
             bool need_balance = false;
 
-            /* ---- 按键扫描 (始终运行) ---- */
-            KeyMenu_Scan();
+            /* ========== 状态机调度 ========== */
+            switch (g_sys_state) {
 
-            /* ========== 控制算法调度 ========== */
-            switch (g_control_state) {
-
-                case CONTROL_IDLE:
+                case STATE_IDLE:
                     LineTrack_Stop();
                     BalanceControl_Reset(&bc);
                     bc.pwm_pulse = 1500U;
                     break;
 
-                case CONTROL_TRACK_ONLY:
+                case STATE_TRACK_ONLY:
                     LineTrack_Loop_10ms();
                     BalanceControl_Reset(&bc);
                     bc.pwm_pulse = 1500U;
                     break;
 
-                case CONTROL_STATIC_BALL:
+                case STATE_STATIC_BALL:
                     LineTrack_Stop();
                     need_balance = true;
                     break;
 
-                case CONTROL_DYNAMIC_BALL:
+                case STATE_DYNAMIC_BALL:
                     LineTrack_Loop_10ms();
                     need_balance = true;
                     break;
