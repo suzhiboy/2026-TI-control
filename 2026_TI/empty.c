@@ -43,6 +43,7 @@
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
+static volatile VisionBallData g_vision_ball = {0};
 
 /* PD42S1 步进电机 UART 写回调 (发送 F5H 指令使能 PWM 位置模式) */
 static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
@@ -59,7 +60,6 @@ int main(void)
     char oled_str[50];
     uint32_t last_vofa_tick = 0;
     uint32_t last_oled_tick = 0;
-    VisionBallData vision_ball;
 
     SYSCFG_DL_init();
 
@@ -108,6 +108,13 @@ int main(void)
         Vofa_Poll();
         VisionUart_Poll(control_ticks_10ms);
 
+        /* 高频获取视觉数据, 更新全局变量供中断读取 */
+        g_vision_ball = VisionUart_GetLatest();
+        if (g_vision_ball.valid) {
+            BalanceControl_SetRawPosition(&bc,
+                (float)g_vision_ball.x_mm / 10.0f);
+        }
+
         now = control_ticks_10ms;
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
@@ -130,13 +137,10 @@ int main(void)
                 sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
                     MT6701_GetActiveAddress());
             }
-            vision_ball = VisionUart_GetLatest();
-            if (vision_ball.valid) {
-                BalanceControl_SetRawPosition(&bc,
-                    (float)vision_ball.x_mm / 10.0f);
-                sprintf(oled_str, "Ball:%dmm C%u", vision_ball.x_mm,
-                    (unsigned)vision_ball.conf_percent);
-            } else if (vision_ball.lost) {
+            if (g_vision_ball.valid) {
+                sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
+                    (unsigned)g_vision_ball.conf_percent);
+            } else {
                 sprintf(oled_str, "Ball:LOST");
             }
             OLED_ShowLineString(4, 1, oled_str);
@@ -145,16 +149,36 @@ int main(void)
     }
 }
 
+/* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
+#define VISION_LOST_TIMEOUT_TICKS  50U
+
 void TIMER_0_INST_IRQHandler(void)
 {
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
-        case DL_TIMER_IIDX_ZERO:
+        case DL_TIMER_IIDX_ZERO: {
+            static uint32_t lost_ticks = 0;
+
             LineTrack_Loop_10ms();
-            BalanceControl_Run(&bc);
+
+            /* 安全降级: 丢球或超时 -> 清除积分并回平 */
+            if (g_vision_ball.valid) {
+                lost_ticks = 0;
+                BalanceControl_Run(&bc);
+            } else {
+                if (lost_ticks < VISION_LOST_TIMEOUT_TICKS) {
+                    lost_ticks++;
+                    BalanceControl_Run(&bc);
+                } else {
+                    BalanceControl_Reset(&bc);
+                    bc.pwm_pulse = 1500U;
+                }
+            }
+
             DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, bc.pwm_pulse,
                                             DL_TIMER_CC_0_INDEX);
             control_ticks_10ms++;
             break;
+        }
         default:
             break;
     }
