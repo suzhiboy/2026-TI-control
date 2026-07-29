@@ -114,6 +114,11 @@ VofaParseResult VofaProtocol_ParseLine(const char *line, VofaCommand *cmd)
             cmd->type = VOFA_CMD_GET;
         } else if (streq(key, "PIDCLR")) {
             cmd->type = VOFA_CMD_CLEAR_PID;
+        } else if (streq(key, "MTESTEXIT")) {
+            cmd->type = VOFA_CMD_MOTOR_TEST;
+            cmd->motor_test_side = VOFA_MOTOR_TEST_EXIT;
+        } else if (streq(key, "MSTAT")) {
+            cmd->type = VOFA_CMD_MOTOR_STATUS;
         } else {
             return VOFA_PARSE_UNKNOWN;
         }
@@ -131,6 +136,25 @@ VofaParseResult VofaProtocol_ParseLine(const char *line, VofaCommand *cmd)
             return VOFA_PARSE_BAD_VALUE;
         }
         cmd->type = VOFA_CMD_SET_BASE_SPEED;
+        return VOFA_PARSE_OK;
+    }
+
+    if (streq(key, "MTEST")) {
+        if (cmd->value != 0.0f) {
+            return VOFA_PARSE_BAD_VALUE;
+        }
+        cmd->type = VOFA_CMD_MOTOR_TEST;
+        cmd->motor_test_side = VOFA_MOTOR_TEST_OFF;
+        return VOFA_PARSE_OK;
+    }
+
+    if ((streq(key, "MTESTL")) || (streq(key, "MTESTR"))) {
+        if ((cmd->value <= 0.0f) || (cmd->value > 2000.0f)) {
+            return VOFA_PARSE_BAD_VALUE;
+        }
+        cmd->type = VOFA_CMD_MOTOR_TEST;
+        cmd->motor_test_side = streq(key, "MTESTL") ?
+            VOFA_MOTOR_TEST_LEFT : VOFA_MOTOR_TEST_RIGHT;
         return VOFA_PARSE_OK;
     }
 

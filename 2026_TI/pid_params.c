@@ -23,17 +23,17 @@ void PidParams_SetDefaults(PidTuningParams *params)
 
     memset(params, 0, sizeof(*params));
 
-    params->line.kp = 0.7f;
-    params->line.ki = 0.05f;
-    params->line.kd = 0.5f;
+    params->line.kp = 0.3f;
+    params->line.ki = 0.0f;
+    params->line.kd = 0.1f;
 
-    params->speed_left.kp = 80.0f;
-    params->speed_left.ki = 5.0f;
-    params->speed_left.kd = 0.5f;
+    params->speed_left.kp = 15.0f;
+    params->speed_left.ki = 0.0f;
+    params->speed_left.kd = 0.0f;
 
-    params->speed_right.kp = 80.0f;
-    params->speed_right.ki = 5.0f;
-    params->speed_right.kd = 0.5f;
+    params->speed_right.kp = 15.0f;
+    params->speed_right.ki = 0.0f;
+    params->speed_right.kd = 0.0f;
 
     params->base_speed = 12.0f;
 }

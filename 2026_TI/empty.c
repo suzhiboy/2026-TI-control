@@ -36,6 +36,7 @@
 #include "oled.h"
 #include "vofa.h"
 #include "mt6701.h"
+#include "vision_uart.h"
 #include "board_config.h"
 #include <stdio.h>
 
@@ -48,6 +49,7 @@ int main(void)
     char oled_str[50];
     uint32_t last_vofa_tick = 0;
     uint32_t last_oled_tick = 0;
+    VisionBallData vision_ball;
 
     SYSCFG_DL_init();
 
@@ -65,9 +67,11 @@ int main(void)
     NVIC_SetPriority(IMU601_INST_INT_IRQN, 1);
     NVIC_SetPriority(TIMER_0_INST_INT_IRQN, 2);
     NVIC_SetPriority(VOFA_INST_INT_IRQN, 3);
+    NVIC_SetPriority(VISION_UART_INST_INT_IRQN, 3);
     __enable_irq();
 
     Vofa_Init();
+    VisionUart_Init();
 
     LineTrack_Start(LineTrack_Get_BaseSpeed());
     DL_Timer_startCounter(TIMER_0_INST);
@@ -78,6 +82,7 @@ int main(void)
 
         IMU601_poll();
         Vofa_Poll();
+        VisionUart_Poll(control_ticks_10ms);
 
         now = control_ticks_10ms;
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
@@ -100,6 +105,13 @@ int main(void)
             } else {
                 sprintf(oled_str, "MT:E%u A%02X", (unsigned)mt6701_status,
                     MT6701_GetActiveAddress());
+            }
+            vision_ball = VisionUart_GetLatest();
+            if (vision_ball.valid) {
+                sprintf(oled_str, "Ball:%dmm C%u", vision_ball.x_mm,
+                    (unsigned)vision_ball.conf_percent);
+            } else if (vision_ball.lost) {
+                sprintf(oled_str, "Ball:LOST");
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();

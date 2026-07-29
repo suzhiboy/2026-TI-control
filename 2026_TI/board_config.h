@@ -43,6 +43,18 @@
 #define PRINT_INST                     UART0
 #endif
 
+#ifndef VISION_UART_INST
+#define VISION_UART_INST               UART0
+#endif
+
+#ifndef VISION_UART_INST_IRQHandler
+#define VISION_UART_INST_IRQHandler    UART0_IRQHandler
+#endif
+
+#ifndef VISION_UART_INST_INT_IRQN
+#define VISION_UART_INST_INT_IRQN      UART0_INT_IRQn
+#endif
+
 #ifndef TM1637_PORT
 #define TM1637_PORT                    GPIOA
 #endif

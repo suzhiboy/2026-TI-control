@@ -3,11 +3,14 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include "encoder.h"
 #include "line_follow.h"
+#include "motor.h"
 #include "uart.h"
 #include "vofa_protocol.h"
 
 #define VOFA_RX_BUF_SIZE 96
+#define VOFA_BUILD_TAG "MTEST_IMM_V2"
 
 static volatile char vofa_rx_buf[VOFA_RX_BUF_SIZE];
 static volatile uint8_t vofa_rx_len = 0;
@@ -107,6 +110,36 @@ static bool apply_base_speed(float value)
     return true;
 }
 
+static void send_motor_status(void)
+{
+    char buf[192];
+    Motor_DebugStatus motor;
+
+    Motor_ReadDebugStatus(&motor);
+    snprintf(buf, sizeof(buf),
+        "#MSTAT LPWM %.0f RPWM %.0f LCC %u RCC %u LRAW %d RRAW %d LPUL %ld RPUL %ld AIN %u%u BIN %u%u PPIN %u%u ADO %08lX AOE %08lX BDO %08lX BOE %08lX %s\r\n",
+        LineTrack_Get_LeftPwm(),
+        LineTrack_Get_RightPwm(),
+        (unsigned)motor.cc_left,
+        (unsigned)motor.cc_right,
+        (int)g_Encoder.speed_left,
+        (int)g_Encoder.speed_right,
+        (long)g_Encoder.pulses_left,
+        (long)g_Encoder.pulses_right,
+        (unsigned)motor.ain1,
+        (unsigned)motor.ain2,
+        (unsigned)motor.bin1,
+        (unsigned)motor.bin2,
+        (unsigned)motor.pwm_left_pin,
+        (unsigned)motor.pwm_right_pin,
+        (unsigned long)motor.gpioa_dout,
+        (unsigned long)motor.gpioa_doe,
+        (unsigned long)motor.gpiob_dout,
+        (unsigned long)motor.gpiob_doe,
+        VOFA_BUILD_TAG);
+    vofa_send(buf);
+}
+
 static void handle_command(const char *line)
 {
     VofaCommand cmd;
@@ -149,6 +182,28 @@ static void handle_command(const char *line)
         LineTrack_ClearPidState();
         vofa_send("#ACK PIDCLR\r\n");
         break;
+    case VOFA_CMD_MOTOR_TEST:
+        if (cmd.motor_test_side == VOFA_MOTOR_TEST_LEFT) {
+            char buf[48];
+            LineTrack_SetMotorTest((int16_t)cmd.value, 0);
+            snprintf(buf, sizeof(buf), "#ACK MTEST LEFT %.0f %s\r\n", cmd.value, VOFA_BUILD_TAG);
+            vofa_send(buf);
+        } else if (cmd.motor_test_side == VOFA_MOTOR_TEST_RIGHT) {
+            char buf[48];
+            LineTrack_SetMotorTest(0, (int16_t)cmd.value);
+            snprintf(buf, sizeof(buf), "#ACK MTEST RIGHT %.0f %s\r\n", cmd.value, VOFA_BUILD_TAG);
+            vofa_send(buf);
+        } else if (cmd.motor_test_side == VOFA_MOTOR_TEST_EXIT) {
+            LineTrack_ExitMotorTest();
+            vofa_send("#ACK MTEST EXIT " VOFA_BUILD_TAG "\r\n");
+        } else {
+            LineTrack_SetMotorTest(0, 0);
+            vofa_send("#ACK MTEST OFF " VOFA_BUILD_TAG "\r\n");
+        }
+        break;
+    case VOFA_CMD_MOTOR_STATUS:
+        send_motor_status();
+        break;
     case VOFA_CMD_NONE:
     default:
         vofa_send("#ERR UNKNOWN\r\n");
@@ -161,7 +216,7 @@ void Vofa_Init(void)
     vofa_rx_len = 0;
     vofa_line_ready = false;
     NVIC_EnableIRQ(VOFA_INST_INT_IRQN);
-    vofa_send("#VOFA READY 115200\r\n");
+    vofa_send("#VOFA READY 115200 " VOFA_BUILD_TAG "\r\n");
 }
 
 void Vofa_Poll(void)
