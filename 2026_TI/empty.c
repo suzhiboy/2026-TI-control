@@ -49,11 +49,14 @@ static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
 
-/* 循迹一圈参数 (赛道 ~6.14m, 留 2% 余量确保过线后停) */
+/* 循迹一圈参数 (赛道 ~6.14m) */
 #define TRACK_LAP_DISTANCE_CM        (614.0f)
-#define TRACK_LAP_STOP_MARGIN_CM     (12.0f)    /* 超量后多走 12cm 防止提前停 */
+#define TRACK_LAP_STOP_DECEL_CM      (30.0f)    /* 最后 30cm 开始减速 */
 static float g_lap_start_distance = 0.0f;
 static bool  g_lap_completed = false;
+static bool  g_lap_decelerating = false;
+static uint32_t g_lap_time_seconds = 0;         /* T2 计时 (秒) */
+static bool  g_timer_running = false;
 
 /* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
@@ -226,27 +229,52 @@ int main(void)
             }
         }
 
-        /* ========== 循迹一圈完成检测 ========== */
-        if (g_control_state == CONTROL_DYNAMIC_BALL) {
-            /* 首次进入 DYNAMIC_BALL 时记录起始里程 */
+        /* ========== 循迹一圈完成检测 (同时支持 TRACK_ONLY / DYNAMIC_BALL) ========== */
+        if (g_control_state == CONTROL_TRACK_ONLY ||
+            g_control_state == CONTROL_DYNAMIC_BALL) {
+
+            /* 首次进入时记录起始里程并启动计时 */
             if (g_lap_start_distance < 0.0f) {
                 g_lap_start_distance = g_Encoder.distance_cm;
                 g_lap_completed = false;
+                g_lap_decelerating = false;
+                g_lap_time_seconds = 0;
+                g_timer_running = true;
             }
+
             if (!g_lap_completed) {
                 float traveled = g_Encoder.distance_cm - g_lap_start_distance;
-                if (traveled >= (TRACK_LAP_DISTANCE_CM + TRACK_LAP_STOP_MARGIN_CM)) {
+
+                /* ---- 最后 30cm 开始减速 ---- */
+                if (!g_lap_decelerating &&
+                    traveled >= (TRACK_LAP_DISTANCE_CM - TRACK_LAP_STOP_DECEL_CM)) {
+                    g_lap_decelerating = true;
+                    /* 降速到 40% */
+                    LineTrack_SetBaseSpeed(LineTrack_Get_BaseSpeed() * 0.4f);
+                }
+
+                /* ---- 到达终点: 刹车 ---- */
+                if (traveled >= TRACK_LAP_DISTANCE_CM) {
                     g_lap_completed = true;
-                    ControlState_Set(CONTROL_IDLE);
+                    g_timer_running = false;
+                    LineTrack_Brake();
                 }
             }
+
+            /* ---- 刹车完成 → 切换到 IDLE ---- */
+            if (g_lap_completed && !LineTrack_IsRunning()) {
+                ControlState_Set(CONTROL_IDLE);
+            }
         } else {
-            /* 离开 DYNAMIC_BALL → 重置, 下次进入重新计数 */
+            /* 离开 → 重置 */
             g_lap_start_distance = -1.0f;
             g_lap_completed = false;
+            g_lap_decelerating = false;
+            g_timer_running = false;
         }
 
         now = control_ticks_10ms;
+
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
             Vofa_SendTelemetry();

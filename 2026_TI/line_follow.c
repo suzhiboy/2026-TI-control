@@ -10,12 +10,15 @@ PID_TypeDef pid_speed_R;
 
 static bool line_track_running = false;
 static float line_base_speed = 12.0f;
+static float line_speed_setpoint = 0.0f;    /* 当前实际使用速度 (带斜坡) */
 static float line_error = 0.0f;
 static float line_turn_out = 0.0f;
 static float filtered_L = 0.0f;
 static float filtered_R = 0.0f;
 static float line_left_pwm = 0.0f;
 static float line_right_pwm = 0.0f;
+static bool line_braking = false;
+static uint8_t line_brake_timer = 0;
 static bool motor_test_mode = false;
 static int16_t motor_test_left_pwm = 0;
 static int16_t motor_test_right_pwm = 0;
@@ -59,6 +62,9 @@ void LineTrack_Start(float base_speed)
         line_base_speed = base_speed;
     }
     LineTrack_Reset();
+    line_speed_setpoint = 0.0f;             /* 从 0 开始斜坡加速 */
+    line_braking = false;
+    line_brake_timer = 0;
     line_track_running = true;
 }
 
@@ -83,6 +89,21 @@ void LineTrack_Reset(void)
     line_turn_out = 0.0f;
     line_left_pwm = 0.0f;
     line_right_pwm = 0.0f;
+}
+
+void LineTrack_SetBaseSpeed(float speed)
+{
+    if (speed >= 0.0f && speed <= 200.0f) {
+        line_base_speed = speed;
+    }
+}
+
+void LineTrack_Brake(void)
+{
+    if (line_track_running) {
+        line_braking = true;
+        line_brake_timer = 0;
+    }
 }
 
 void LineTrack_SetParams(const PidTuningParams *params)
@@ -158,11 +179,45 @@ void LineTrack_Loop_10ms(void)
     }
 
     if (line_track_running) {
+        /* ---- 加速斜坡: 逐渐加速到目标速度 ---- */
+        if (!line_braking) {
+            if (line_speed_setpoint < line_base_speed) {
+                line_speed_setpoint += 0.8f;                    /* 每 10ms 加 0.8 → ~150ms 到 12.0 */
+                if (line_speed_setpoint > line_base_speed) {
+                    line_speed_setpoint = line_base_speed;
+                }
+            }
+        }
+
+        /* ---- 刹车流程 ---- */
+        if (line_braking) {
+            line_brake_timer++;
+            if (line_brake_timer <= 5) {
+                /* Phase 1: 快速减速到 0 (5 ticks = 50ms) */
+                line_speed_setpoint *= 0.6f;
+                if (line_speed_setpoint < 0.5f) line_speed_setpoint = 0.0f;
+            } else if (line_brake_timer <= 8) {
+                /* Phase 2: 主动反转刹车 (3 ticks = 30ms) */
+                Set_Motor_Speed_Left(0);
+                Set_Motor_Speed_Right(0);
+                line_speed_setpoint = 0.0f;
+                return;     /* 跳过后面的 PID 计算 */
+            } else {
+                /* Phase 3: 完全停止 */
+                Set_Motor_Speed_Left(0);
+                Set_Motor_Speed_Right(0);
+                line_braking = false;
+                line_track_running = false;
+                line_speed_setpoint = 0.0f;
+                return;
+            }
+        }
+
         line_error = Sensor_Get_Error();
         line_turn_out = PID_Calc_Positional(&pid_line, line_error);
 
-        pid_speed_L.target = clamp_target_speed(line_base_speed + line_turn_out);
-        pid_speed_R.target = clamp_target_speed(line_base_speed - line_turn_out);
+        pid_speed_L.target = clamp_target_speed(line_speed_setpoint + line_turn_out);
+        pid_speed_R.target = clamp_target_speed(line_speed_setpoint - line_turn_out);
     } else {
         line_turn_out = 0.0f;
         pid_speed_L.target = 0.0f;

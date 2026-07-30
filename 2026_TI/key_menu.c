@@ -5,6 +5,7 @@
  */
 
 #include "key_menu.h"
+#include "line_follow.h"
 #include "oled.h"
 #include "board_config.h"
 #include "sys_state.h"
@@ -16,8 +17,9 @@
 
 static void T2_Init(void)
 {
-    /* ISR 根据 g_control_state 调度 LineTrack + BalanceControl */
-    ControlState_Set(CONTROL_DYNAMIC_BALL);
+    /* T2: 纯循迹, 不需要稳球 */
+    ControlState_Set(CONTROL_TRACK_ONLY);
+    LineTrack_Start(LineTrack_Get_BaseSpeed());
 }
 static void T2_Run(void)
 {
