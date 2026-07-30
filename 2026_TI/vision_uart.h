@@ -9,6 +9,10 @@ typedef struct {
     bool lost;
     uint16_t seq;
     int16_t x_mm;
+    int16_t raw_x_mm;
+    uint16_t cx;
+    uint16_t cy;
+    uint8_t quality;
     uint8_t conf_percent;
     uint8_t fps;
     uint32_t last_update_tick;
