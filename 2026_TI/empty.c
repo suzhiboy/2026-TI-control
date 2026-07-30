@@ -42,6 +42,7 @@
 #include "sys_state.h"
 #include "encoder.h"
 #include "key_menu.h"
+#include "delay.h"
 #include <stdio.h>
 
 static volatile uint32_t control_ticks_10ms = 0;
@@ -67,6 +68,63 @@ static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
 static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
+/* ======================================================================== *
+ *  PD42S1 归位演示: 上电后 CW 15° → 归位 → CCW 15° → 归位
+ *
+ *  映射计算:
+ *    PD42S1 500~2500 µs → 0~25600 micro-steps (线性)
+ *    1 µs = 12.8 micro-steps, 1 rev = 25600 steps = 360°
+ *    15° = 15/360 × 25600 = 1066.7 steps → 83 µs
+ * ======================================================================== */
+static void pd42s1_homing_demo(void)
+{
+    char str[32];
+
+    /* 15° 对应脉宽偏移量 */
+    const uint16_t OFFSET_15D = 83U;
+    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_15D;
+    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_15D;
+
+    OLED_Clear();
+    OLED_ShowLineString(1, 1, "PD42S1 Homing");
+    OLED_Refresh();
+    delay_ms(500);
+
+    /* ---- Step 1: 顺时针 15° ---- */
+    snprintf(str, sizeof(str), "CW +15  %uus", (unsigned)PULSE_CW);
+    OLED_ShowLineString(2, 1, str);
+    OLED_Refresh();
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, PULSE_CW,
+                                    DL_TIMER_CC_1_INDEX);
+    delay_ms(2000);
+
+    /* ---- Step 2: 归位 (中心) ---- */
+    OLED_ShowLineString(2, 1, "Center  1500us");
+    OLED_Refresh();
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
+                                    DL_TIMER_CC_1_INDEX);
+    delay_ms(1000);
+
+    /* ---- Step 3: 逆时针 15° ---- */
+    snprintf(str, sizeof(str), "CCW -15  %uus", (unsigned)PULSE_CCW);
+    OLED_ShowLineString(2, 1, str);
+    OLED_Refresh();
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, PULSE_CCW,
+                                    DL_TIMER_CC_1_INDEX);
+    delay_ms(2000);
+
+    /* ---- Step 4: 归位 ---- */
+    OLED_ShowLineString(2, 1, "Center  1500us");
+    OLED_Refresh();
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
+                                    DL_TIMER_CC_1_INDEX);
+    delay_ms(500);
+
+    OLED_ShowLineString(3, 1, "Demo Done!");
+    OLED_Refresh();
+    delay_ms(500);
+}
+
 int main(void)
 {
     char oled_str[50];
@@ -79,12 +137,36 @@ int main(void)
     BalanceControl_PD42S1_Init(pd42s1_uart_write);
     BalanceControl_SetReference(&bc, 0.0f);
 
-    /* 配置 PD42S1 PWM 输出: PA17 作为 TIMA1_CC0 */
-    DL_GPIO_initPeripheralOutputFunction(IOMUX_PINCM39,
-                                         IOMUX_PINCM39_PF_TIMA1_CCP0);
-    DL_Timer_setCCPDirection(PD42S1_PWM_INST, DL_TIMER_CC0_OUTPUT);
+    /* 配置 PD42S1 PWM 输出: PB18 作为 TIMA1_CC1 */
+    DL_GPIO_initPeripheralOutputFunction(IOMUX_PINCM44,
+                                         IOMUX_PINCM44_PF_TIMA1_CCP1);
+    DL_Timer_setCCPDirection(PD42S1_PWM_INST, DL_TIMER_CC1_OUTPUT);
+
+    /*
+     * ！！！关键修复：配置 CCP1 输出控制 + 信号发生器动作 ！！！
+     * ==========================================================
+     * TIMA1 在 PERIODIC_UP 模式下, SysConfig 不会自动配置 CCP
+     * 输出通道, 以下两项必须手动添加:
+     *
+     *   1. setCaptureCompareOutCtl — 让 CCP1 引脚受信号发生器驱动
+     *   2. setCaptureCompareAction — 定义匹配/归零时的引脚动作
+     *
+     * 动作策略 — 产生脉宽 = CC×1µs 的正脉冲 (50Hz):
+     *   ZACT→HIGH (计数值归零时拉高=脉宽开始)
+     *   CUACT→LOW  (计数值匹配时拉低=脉宽结束)
+     *   1500→1500µs HIGH, 500→500µs, 2500→2500µs
+     */
+    DL_Timer_setCaptureCompareOutCtl(PD42S1_PWM_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW,
+        DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL,
+        DL_TIMER_CC_1_INDEX);
+    DL_Timer_setCaptureCompareAction(PD42S1_PWM_INST,
+        DL_TIMER_CC_CUACT_CCP_LOW | DL_TIMER_CC_ZACT_CCP_HIGH,
+        DL_TIMER_CC_1_INDEX);
+
     DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, 1500U,
-                                    DL_TIMER_CC_0_INDEX);
+                                    DL_TIMER_CC_1_INDEX);
 
     OLED_Init();
     OLED_Clear();
@@ -108,9 +190,13 @@ int main(void)
     KeyMenu_Init();
 
     LineTrack_Start(LineTrack_Get_BaseSpeed());
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, 1500U,
-                                    DL_TIMER_CC_0_INDEX);
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
+                                    DL_TIMER_CC_1_INDEX);
     DL_Timer_startCounter(PD42S1_PWM_INST);
+
+    /* ===== PD42S1 归位演示 (控制 ISR 尚未启动, 不会覆盖 PWM) ===== */
+    pd42s1_homing_demo();
+
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
@@ -240,7 +326,7 @@ void TIMER_0_INST_IRQHandler(void)
             }
 
             DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, bc.pwm_pulse,
-                                            DL_TIMER_CC_0_INDEX);
+                                            DL_TIMER_CC_1_INDEX);
             control_ticks_10ms++;
             break;
         }
