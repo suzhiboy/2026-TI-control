@@ -9,7 +9,11 @@
 #include "oled.h"
 #include "board_config.h"
 #include "sys_state.h"
+#include "sensor.h"
 #include <stdio.h>
+
+/* T6 用户自定义目标位置 (cm), 范围 ±12.0 cm, 步进 1.0 cm */
+float user_target_x_cm = 0.0f;
 
 /* ======================================================================== *
  *  任务占位函数 (后续对接实际控制代码)
@@ -17,9 +21,8 @@
 
 static void T2_Init(void)
 {
-    /* T2: 纯循迹, 不需要稳球 */
-    ControlState_Set(CONTROL_TRACK_ONLY);
-    LineTrack_Start(LineTrack_Get_BaseSpeed());
+    extern void Task2_Init(void);
+    Task2_Init();
 }
 static void T2_Run(void)
 {
@@ -46,17 +49,17 @@ static void T3_Stop(void)
     ControlState_Set(CONTROL_IDLE);
 }
 
-static void T4_Init(void)  { /* TODO: A到B稳中心初始化 */ }
-static void T4_Run(void)   { /* TODO: 移动 + 稳球在中心 */ }
-static void T4_Stop(void)  { /* TODO: 停止 */ }
+static void T4_Init(void)  { extern void Task4_Init(void); Task4_Init(); }
+static void T4_Run(void)   { /* ISR 统一调度, 此处无需操作 */ }
+static void T4_Stop(void)  { ControlState_Set(CONTROL_IDLE); }
 
-static void T5_Init(void)  { /* TODO: 一圈稳中心初始化 */ }
-static void T5_Run(void)   { /* TODO: 循迹 + 稳球在中心 */ }
-static void T5_Stop(void)  { /* TODO: 停止 */ }
+static void T5_Init(void)  { extern void Task5_Init(void); Task5_Init(); }
+static void T5_Run(void)   { /* ISR 统一调度, 此处无需操作 */ }
+static void T5_Stop(void)  { ControlState_Set(CONTROL_IDLE); }
 
-static void T6_Init(void)  { /* TODO: 一圈稳任意点初始化 */ }
-static void T6_Run(void)   { /* TODO: 循迹 + 稳球在 target_mm */ }
-static void T6_Stop(void)  { /* TODO: 停止 */ }
+static void T6_Init(void)  { extern void Task6_Init(void); Task6_Init(); }
+static void T6_Run(void)   { /* ISR 统一调度, 此处无需操作 */ }
+static void T6_Stop(void)  { ControlState_Set(CONTROL_IDLE); }
 
 /* ======================================================================== *
  *  任务注册表
@@ -230,10 +233,10 @@ static void Target_Clamp(void)
 
 static void FSM_Menu(void)
 {
-    /* K1 短按: task_id++ */
+    /* K1 短按: task_id-- (上一个任务) */
     if (Key_ConsumeShort(KEY_IDX_K1)) {
-        if ((int)menu.task_id < TASK_ID_MAX) {
-            menu.task_id = (TaskID)((int)menu.task_id + 1);
+        if ((int)menu.task_id > TASK_ID_MIN) {
+            menu.task_id = (TaskID)((int)menu.task_id - 1);
         }
     }
 
@@ -244,28 +247,41 @@ static void FSM_Menu(void)
         return;
     }
 
-    /* K2 短按: task_id-- */
+    /* K2 短按: task_id++ (下一个任务) */
     if (Key_ConsumeShort(KEY_IDX_K2)) {
-        if ((int)menu.task_id > TASK_ID_MIN) {
-            menu.task_id = (TaskID)((int)menu.task_id - 1);
+        if ((int)menu.task_id < TASK_ID_MAX) {
+            menu.task_id = (TaskID)((int)menu.task_id + 1);
         }
     }
 
-    /* K2 长按: 恢复默认参数 */
+    /* K2 长按: 恢复默认参数 (task_id → T4, target_mm → 0) */
     if (Key_ConsumeLong(KEY_IDX_K2)) {
         menu.task_id   = TASK_ID_DEFAULT;
         menu.target_mm = 0;
     }
 
-    /* 上电 2 秒窗口: K3/K4 调节 target_mm */
+    /* 上电 2 秒窗口: K3/K4 调节参数 (仅此窗口有效) */
     if (menu.startup_window) {
-        if (Key_ConsumeShort(KEY_IDX_K3)) {
-            menu.target_mm += TARGET_STEP_MM;
-            Target_Clamp();
-        }
-        if (Key_ConsumeShort(KEY_IDX_K4)) {
-            menu.target_mm -= TARGET_STEP_MM;
-            Target_Clamp();
+        if (menu.task_id == TASK_T6) {
+            /* T6 选中: K3/K4 以 1.0cm 步进调节 user_target_x_cm */
+            if (Key_ConsumeShort(KEY_IDX_K3)) {
+                user_target_x_cm += 1.0f;
+                if (user_target_x_cm > 12.0f) user_target_x_cm = 12.0f;
+            }
+            if (Key_ConsumeShort(KEY_IDX_K4)) {
+                user_target_x_cm -= 1.0f;
+                if (user_target_x_cm < -12.0f) user_target_x_cm = -12.0f;
+            }
+        } else {
+            /* 其他任务: K3/K4 以 1mm 步进调节 target_mm */
+            if (Key_ConsumeShort(KEY_IDX_K3)) {
+                menu.target_mm += TARGET_STEP_MM;
+                Target_Clamp();
+            }
+            if (Key_ConsumeShort(KEY_IDX_K4)) {
+                menu.target_mm -= TARGET_STEP_MM;
+                Target_Clamp();
+            }
         }
     }
 }
@@ -294,11 +310,10 @@ static void FSM_Ready(void)
         return;
     }
 
-    /* K1 长按: 清零编码器 + 计时 + 摆杆零点 */
+    /* K1 长按: 清零编码器 + 秒表 + 摆杆角度零点 */
     if (Key_ConsumeLong(KEY_IDX_K1)) {
-        /* TODO: 调用编码器清零 API */
-        /* TODO: 调用计时清零 API */
-        /* TODO: 调用摆杆角度零点校准 API */
+        extern void Task_SystemReset(void);
+        Task_SystemReset();
     }
 }
 
@@ -413,19 +428,30 @@ void KeyMenu_OLED(void)
     char buf[22];
 
     /* Line 1: 任务名 */
-    if (menu.task_id >= TASK_ID_MIN && menu.task_id <= TASK_ID_MAX) {
-        snprintf(buf, sizeof(buf), "%-16d", (int)menu.task_id);
+    if (menu.task_id == TASK_T6) {
+        snprintf(buf, sizeof(buf), "T6 %.1fcm       ", (double)user_target_x_cm);
+    } else if (menu.task_id == TASK_T3) {
+        snprintf(buf, sizeof(buf), "T3 +5/-5cm      ");
+    } else if (menu.task_id == TASK_T4) {
+        snprintf(buf, sizeof(buf), "T4 A->B 0cm     ");
+    } else if (menu.task_id == TASK_T5) {
+        snprintf(buf, sizeof(buf), "T5 Lap 0cm      ");
     } else {
-        snprintf(buf, sizeof(buf), "?               ");
+        snprintf(buf, sizeof(buf), "T2 Track        ");
     }
     OLED_ShowLineString(1, 1, buf);
 
-    /* Line 2: 目标点 */
-    snprintf(buf, sizeof(buf), "target: %4d mm", menu.target_mm);
+    /* Line 2: 目标点 / T6 显示自定义参数 */
+    if (menu.task_id == TASK_T6) {
+        snprintf(buf, sizeof(buf), "target: %+.1fcm  ", (double)user_target_x_cm);
+    } else {
+        snprintf(buf, sizeof(buf), "target: %4d mm  ", menu.target_mm);
+    }
     OLED_ShowLineString(2, 1, buf);
 
-    /* Line 3: 系统状态 */
-    OLED_ShowLineString(3, 1, state_names[menu.state]);
+    /* Line 3: 系统状态 (仅标签, 无秒表) */
+    snprintf(buf, sizeof(buf), "%-16s", state_names[menu.state]);
+    OLED_ShowLineString(3, 1, buf);
 }
 
 /* ======================================================================== *

@@ -41,6 +41,7 @@
 #include "balance_control.h"
 #include "sys_state.h"
 #include "encoder.h"
+#include "sensor.h"
 #include "key_menu.h"
 #include "delay.h"
 #include <stdio.h>
@@ -49,9 +50,11 @@ static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
 
-/* 循迹一圈参数 (赛道 ~6.14m) */
+/* 循迹一圈参数 — 参考值 (赛道 ~6.14m)
+ * 注意: T2 现已改用灰度传感器终点线检测, 不再依赖固定里程阈值,
+ *       以下常量仅保留作为赛道长度参考. */
 #define TRACK_LAP_DISTANCE_CM        (614.0f)
-#define TRACK_LAP_STOP_DECEL_CM      (30.0f)    /* 最后 30cm 开始减速 */
+#define TRACK_LAP_STOP_DECEL_CM      (30.0f)    /* 最后 30cm 开始减速 (旧逻辑) */
 static float g_lap_start_distance = 0.0f;
 static bool  g_lap_completed = false;
 static bool  g_lap_decelerating = false;
@@ -74,8 +77,30 @@ static uint8_t  task3_step = 0;         /* 阶段: 0=0→+5, 1=hold+5,         *
 /* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
 
+/* ======================================================================== *
+ *  T4/T5/T6 共用参数
+ *
+ *  停车策略: 编码器里程开窗 + 灰度传感器检测横线 (双重确认)
+ *    开窗后如果 ≥5 路探头同时检测到黑线, 判为终点横线.
+ * ======================================================================== */
+#define TASK4_STOP_WINDOW_CM    (120.0f)  /* A→B 1.5m, 1.2m后开启冲线检测    */
+#define LAP_STOP_WINDOW_CM      (550.0f)  /* 一圈6.14m, 5.5m后开启冲线检测   */
+#define LINE_DETECT_THRESHOLD   (5U)      /* ≥5探头同时检测黑线 = 横线       */
+#define TASK4_TARGET_SPEED      (25.0f)   /* T4 直道目标速度                 */
+#define LAP_TARGET_SPEED        (25.0f)   /* T5/T6 一圈目标速度              */
+
+/* T2 一圈停车: 编码器/偏航开窗 + 灰度终点线检测 (双重确认)         *
+ * 开窗后如果 ≥5 路探头同时检测到黑线, 判为终点横线立即刹车.          *
+ * 里程和偏航是 "或" 关系, 任一开窗即可启动灰度检测,                  *
+ * 防止编码器校准偏差或 IMU 漂移导致跑多圈或停不下来.                */
+#define T2_STOP_WINDOW_CM       (500.0f)  /* 500cm后开启终点线灰度检测       */
+static float t2_start_dist  = 0.0f;       /* T2 启动时的编码器初始里程        */
+static bool  t2_finish_line = false;      /* T2 终点横线已检测标志            */
+
+float             run_time_s = 0.0f;          /* 秒表, 每 10ms += 0.01s       */
+static bool       finish_line_detected = false;/* 已检测到终点横线             */
+
 static MT6701_Data mt6701;
-static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
 /* ======================================================================== *
  *  PD42S1 平滑斜坡辅助函数 & 归位演示
@@ -269,6 +294,98 @@ void Task3_UpdateTrajectory(void)
     }
 }
 
+/* ======================================================================== *
+ *  T2 一圈停车初始化 (由 key_menu T2_Init 调用)
+ * ======================================================================== */
+
+void Task2_Init(void)
+{
+    t2_start_dist  = g_Encoder.distance_cm;
+    t2_finish_line = false;
+    g_lap_completed     = false;
+    g_lap_decelerating  = false;
+    g_timer_running     = false;
+    g_yaw_accumulated   = 0.0f;
+    g_last_yaw          = current_attitude.yaw;
+    g_start_yaw         = current_attitude.yaw;
+    run_time_s          = 0.0f;
+    ControlState_Set(CONTROL_TRACK_ONLY);
+    LineTrack_Start(LineTrack_Get_BaseSpeed());
+}
+
+/* ======================================================================== *
+ *  T4/T5/T6 共用辅助函数
+ * ======================================================================== */
+
+/**
+ * @brief  检测是否压到终点横线 (≥5 路探头同时检测到黑线)
+ * @return true = 压线
+ */
+static bool Check_Finish_Line(void)
+{
+    uint8_t data[SENSOR_COUNT];
+    uint8_t count = 0;
+
+    Sensor_Read_All(data);
+    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+        if (data[i] == 1U) count++;   /* LINE_DETECTED */
+    }
+    return (count >= LINE_DETECT_THRESHOLD);
+}
+
+/**
+ * @brief  系统一键清零: 编码器 + 秒表 + 摆杆角度零点
+ *         由 READY 态 K1 长按触发
+ */
+void Task_SystemReset(void)
+{
+    Encoder_Clear();
+    run_time_s = 0.0f;
+    BalanceControl_CalibrateCenter(&bc, BC_PWM_CENTER_US);
+}
+
+/**
+ * @brief  初始化 T4: 小球居中, 跑直道 A→B 停车
+ */
+void Task4_Init(void)
+{
+    BalanceControl_SetReference(&bc, 0.0f);
+    Encoder_Clear();
+    run_time_s = 0.0f;
+    finish_line_detected = false;
+    LineTrack_Start(TASK4_TARGET_SPEED);
+    ControlState_Set(CONTROL_TASK4);
+}
+
+/**
+ * @brief  初始化 T5: 小球居中, 跑一圈回 A 点停车
+ */
+void Task5_Init(void)
+{
+    BalanceControl_SetReference(&bc, 0.0f);
+    Encoder_Clear();
+    run_time_s = 0.0f;
+    finish_line_detected = false;
+    LineTrack_Start(LAP_TARGET_SPEED);
+    ControlState_Set(CONTROL_TASK5);
+}
+
+/**
+ * @brief  初始化 T6: 小球在用户设定位置, 跑一圈回 A 点停车
+ */
+void Task6_Init(void)
+{
+    float target_cm = user_target_x_cm;
+    if (target_cm < -12.0f) target_cm = -12.0f;
+    if (target_cm >  12.0f) target_cm =  12.0f;
+    BalanceControl_SetReference(&bc, target_cm);
+    Encoder_Clear();
+    run_time_s = 0.0f;
+    finish_line_detected = false;
+    LineTrack_Start(LAP_TARGET_SPEED);
+    ControlState_Set(CONTROL_TASK6);
+}
+
 int main(void)
 {
     char oled_str[50];
@@ -299,7 +416,6 @@ int main(void)
 
     Vofa_Init();
     VisionUart_Init();
-    KeyMenu_Init();
 
     LineTrack_Start(LineTrack_Get_BaseSpeed());
     DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
@@ -312,10 +428,11 @@ int main(void)
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
-    /* ========== 初始 IDLE, 等待菜单系统启动任务 ========== */
-    ControlState_Set(CONTROL_IDLE);
-    g_lap_start_distance = -1.0f;   /* 负值表示未记录起始里程 */
-    g_lap_completed = false;
+    /* ========== 无按键模式: 配置 PB13 为 AD2 后直接启动 T2 一圈停车 ========== */
+    DL_GPIO_initDigitalOutput(GPIO_SENSOR_AD2_IOMUX);
+    DL_GPIO_enableOutput(GPIO_SENSOR_PORT, GPIO_SENSOR_AD2_PIN);
+    DL_GPIO_clearPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD2_PIN);
+    Task2_Init();
 
     while (1) {
         uint32_t now;
@@ -331,19 +448,13 @@ int main(void)
                 (float)g_vision_ball.x_mm / 10.0f);
         }
 
-        /* ---- 运行当前任务 (按键菜单 RUNNING 态) ---- */
-        if (KeyMenu_GetState() == SYS_RUNNING) {
-            const TaskDef *task = KeyMenu_GetCurrentTask();
-            if (task && task->run) {
-                task->run();
-            }
-        }
+        /* ========== T2 一圈停车: 主循环只做偏航跟踪供 OLED 显示 ==========
+         *  停车判定已移至 ISR CONTROL_TRACK_ONLY 处理:
+         *    编码器开窗 OR 偏航开窗 → 灰度终点线检测 → LineTrack_Brake → IDLE
+         * ================================================================== */
+        if (g_control_state == CONTROL_TRACK_ONLY) {
 
-        /* ========== 循迹一圈完成检测 (同时支持 TRACK_ONLY / DYNAMIC_BALL) ========== */
-        if (g_control_state == CONTROL_TRACK_ONLY ||
-            g_control_state == CONTROL_DYNAMIC_BALL) {
-
-            /* 首次进入时记录起始里程/航向并启动计时 */
+            /* 首次进入时记录起始里程/航向 */
             if (g_lap_start_distance < 0.0f) {
                 g_lap_start_distance = g_Encoder.distance_cm;
                 g_lap_completed = false;
@@ -355,8 +466,8 @@ int main(void)
                 g_yaw_accumulated = 0.0f;
             }
 
+            /* IMU 偏航角累计 (仅用于 OLED 显示, 不再参与停车判定) */
             if (!g_lap_completed) {
-                /* ---- IMU 偏航角累计 (处理 0/360 跳变) ---- */
                 float yaw = current_attitude.yaw;
                 float delta = yaw - g_last_yaw;
                 if (delta > 180.0f)  delta -= 360.0f;
@@ -364,32 +475,15 @@ int main(void)
                 if (delta < 0.0f)    delta = -delta;
                 g_yaw_accumulated += delta;
                 g_last_yaw = yaw;
-
-                float traveled = g_Encoder.distance_cm - g_lap_start_distance;
-
-                /* ---- 最后 30cm 减速 (里程 + IMU 双确认) ---- */
-                if (!g_lap_decelerating &&
-                    traveled >= (TRACK_LAP_DISTANCE_CM - TRACK_LAP_STOP_DECEL_CM) &&
-                    g_yaw_accumulated >= TRACK_LAP_YAW_DECEL_THRESHOLD) {
-                    g_lap_decelerating = true;
-                    LineTrack_SetBaseSpeed(LineTrack_Get_BaseSpeed() * 0.4f);
-                }
-
-                /* ---- 到达终点: 刹车 (里程 + IMU 双确认) ---- */
-                if (traveled >= TRACK_LAP_DISTANCE_CM &&
-                    g_yaw_accumulated >= TRACK_LAP_YAW_THRESHOLD) {
-                    g_lap_completed = true;
-                    g_timer_running = false;
-                    LineTrack_Brake();
-                }
             }
 
-            /* ---- 刹车完成 → 切换到 IDLE ---- */
-            if (g_lap_completed && !LineTrack_IsRunning()) {
-                ControlState_Set(CONTROL_IDLE);
+            /* 同步 ISR 终点线状态到主循环变量 (OLED 显示用) */
+            if (t2_finish_line) {
+                g_lap_completed = true;
+                g_timer_running = false;
             }
         } else {
-            /* 离开 → 重置 */
+            /* 离开 CONTROL_TRACK_ONLY → 复位 */
             g_lap_start_distance = -1.0f;
             g_lap_completed = false;
             g_lap_decelerating = false;
@@ -407,33 +501,35 @@ int main(void)
         if ((uint32_t)(now - last_oled_tick) >= 10U) {
             last_oled_tick = now;
 
-            /* ---- 菜单信息 (Line 1~3) ---- */
-            KeyMenu_OLED();
-
-            /* ---- Line 4: 循迹时显示偏航角 / T3 时显示轨迹 / 球控时显示小球 ---- */
-            if (g_control_state == CONTROL_TRACK_ONLY) {
-                /* T2: 显示偏航累计 vs 编码器里程 */
+            /* ---- T2 一圈停车专用 OLED 显示 ---- */
+            {
                 float traveled = (g_lap_start_distance >= 0.0f)
                     ? (g_Encoder.distance_cm - g_lap_start_distance) : 0.0f;
-                sprintf(oled_str, "Y:%.0f D:%.0f",
-                    (double)g_yaw_accumulated, (double)traveled);
-            } else if (g_control_state == CONTROL_TASK3) {
-                /* T3: 显示阶段/参考/实际位置 */
-                sprintf(oled_str, "S%d R:%+.1f P:%+.1f",
-                    (int)task3_step,
-                    (double)bc.x_ref,
-                    (double)bc.x_pos);
-            } else {
-                mt6701_status = MT6701_Update(&mt6701);
-                if (g_vision_ball.valid) {
-                    sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
-                        (unsigned)g_vision_ball.conf_percent);
+
+                /* Line 1: 任务名 */
+                sprintf(oled_str, "T2 一圈停车       ");
+                OLED_ShowLineString(1, 1, oled_str);
+
+                /* Line 2: 里程 + 偏航 */
+                sprintf(oled_str, "D:%.0fcm Y:%.0fdeg",
+                    (double)traveled, (double)g_yaw_accumulated);
+                OLED_ShowLineString(2, 1, oled_str);
+
+                /* Line 3: 运行时间 */
+                sprintf(oled_str, "T:%.1fs            ", (double)run_time_s);
+                OLED_ShowLineString(3, 1, oled_str);
+
+                /* Line 4: 运行状态 */
+                if (t2_finish_line) {
+                    sprintf(oled_str, "> LINE! 刹车中... ");
+                } else if (g_control_state == CONTROL_IDLE) {
+                    sprintf(oled_str, "> 已停车           ");
                 } else {
-                    sprintf(oled_str, "ball:LOST");
+                    sprintf(oled_str, "> 巡线中...        ");
                 }
+                OLED_ShowLineString(4, 1, oled_str);
+                OLED_Refresh();
             }
-            OLED_ShowLineString(4, 1, oled_str);
-            OLED_Refresh();
         }
     }
 }
@@ -445,8 +541,10 @@ void TIMER_0_INST_IRQHandler(void)
             static uint32_t lost_ticks = 0;
             bool need_balance = false;
 
-            /* ---- 按键扫描 (始终运行) ---- */
-            KeyMenu_Scan();
+            /* ---- 秒表累加 (非 IDLE 态) ---- */
+            if (g_control_state != CONTROL_IDLE) {
+                run_time_s += 0.01f;
+            }
 
             /* ========== 控制算法调度 ========== */
             switch (g_control_state) {
@@ -458,7 +556,23 @@ void TIMER_0_INST_IRQHandler(void)
                     break;
 
                 case CONTROL_TRACK_ONLY:
-                    LineTrack_Loop_10ms();
+                    if (!t2_finish_line) {
+                        LineTrack_Loop_10ms();
+                        float traveled = g_Encoder.distance_cm - t2_start_dist;
+
+                        /* 编码器里程开窗 OR 偏航累计开窗 → 启动灰度终点线检测 */
+                        if ((traveled >= T2_STOP_WINDOW_CM ||
+                             g_yaw_accumulated >= TRACK_LAP_YAW_THRESHOLD) &&
+                            Check_Finish_Line()) {
+                            t2_finish_line = true;
+                            LineTrack_Brake();
+                        }
+                    } else {
+                        /* 刹车完成 → IDLE */
+                        if (!LineTrack_IsRunning()) {
+                            ControlState_Set(CONTROL_IDLE);
+                        }
+                    }
                     BalanceControl_Reset(&bc);
                     bc.pwm_pulse = 1500U;
                     break;
@@ -467,6 +581,48 @@ void TIMER_0_INST_IRQHandler(void)
                 case CONTROL_STATIC_BALL:
                     LineTrack_Stop();
                     need_balance = true;
+                    break;
+
+                case CONTROL_TASK4:
+                    BalanceControl_SetReference(&bc, 0.0f);
+                    if (!finish_line_detected) {
+                        LineTrack_Loop_10ms();
+                        if (g_Encoder.distance_cm >= TASK4_STOP_WINDOW_CM &&
+                            Check_Finish_Line()) {
+                            finish_line_detected = true;
+                            LineTrack_Stop();
+                            ControlState_Set(CONTROL_IDLE);
+                        }
+                    }
+                    need_balance = false;  /* 停稳后由 IDLE 处理平衡复位 */
+                    break;
+
+                case CONTROL_TASK5:
+                    BalanceControl_SetReference(&bc, 0.0f);
+                    if (!finish_line_detected) {
+                        LineTrack_Loop_10ms();
+                        if (g_Encoder.distance_cm >= LAP_STOP_WINDOW_CM &&
+                            Check_Finish_Line()) {
+                            finish_line_detected = true;
+                            LineTrack_Stop();
+                            ControlState_Set(CONTROL_IDLE);
+                        }
+                    }
+                    need_balance = false;
+                    break;
+
+                case CONTROL_TASK6:
+                    BalanceControl_SetReference(&bc, user_target_x_cm);
+                    if (!finish_line_detected) {
+                        LineTrack_Loop_10ms();
+                        if (g_Encoder.distance_cm >= LAP_STOP_WINDOW_CM &&
+                            Check_Finish_Line()) {
+                            finish_line_detected = true;
+                            LineTrack_Stop();
+                            ControlState_Set(CONTROL_IDLE);
+                        }
+                    }
+                    need_balance = false;
                     break;
 
                 case CONTROL_DYNAMIC_BALL:
