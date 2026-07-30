@@ -184,12 +184,14 @@ static void Key_FlushAll(void)
 }
 
 /* ======================================================================== *
- *  target_mm 限幅到水管有效范围
+ *  target_mm — 物理单位: mm（毫米）
+ *  注: 1 mm = 0.1 cm, 即每步 0.1 厘米
+ *  管道总行程约 ±120 mm (±12 cm), 超出自动 clamp
  * ======================================================================== */
 
-#define TARGET_MIN_MM   (-120)
-#define TARGET_MAX_MM   ( 120)
-#define TARGET_STEP_MM  ( 10)
+#define TARGET_MIN_MM   (-120)   /* 水管左极限 (mm) = -12.0 cm */
+#define TARGET_MAX_MM   ( 120)   /* 水管右极限 (mm) = +12.0 cm */
+#define TARGET_STEP_MM  (   1)   /* K3/K4 每按一次增减量: 1 mm = 0.1 cm */
 
 static void Target_Clamp(void)
 {
