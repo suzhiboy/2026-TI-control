@@ -62,55 +62,93 @@ static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
 /* ======================================================================== *
- *  PD42S1 归位演示: 上电后 CW 15° → 归位 → CCW 15° → 归位
+ *  PD42S1 平滑斜坡辅助函数 & 归位演示
  *
  *  映射计算:
- *    PD42S1 500~2500 µs → 0~25600 micro-steps (线性)
- *    1 µs = 12.8 micro-steps, 1 rev = 25600 steps = 360°
- *    15° = 15/360 × 25600 = 1066.7 steps → 83 µs
+ *    PD42S1 500~2500 µs → 0~25600 counts (线性)
+ *    1 µs = 12.8 counts, 1 rev = 25600 counts = 360°
+ *    30° = 30/360 × 25600 = 2133.3 counts → 166 µs
+ *
+ *  平滑原理:
+ *    脉宽每次增减 1 µs, 配合间隔延时 → 电机位置连续微调, 无阶跃冲击
  * ======================================================================== */
+
+/**
+ * @brief  平滑地将 PWM 脉宽从 from_pulse 过渡到 to_pulse
+ * @param  from_pulse  起始脉宽 (µs)
+ * @param  to_pulse    目标脉宽 (µs)
+ * @param  duration_ms 过渡总时长 (ms)
+ */
+static void pd42s1_smooth_move(uint16_t from_pulse, uint16_t to_pulse,
+                                uint32_t duration_ms)
+{
+    if (from_pulse == to_pulse) return;
+
+    uint32_t steps;
+    int32_t step_dir;
+    if (to_pulse > from_pulse) {
+        steps    = (uint32_t)(to_pulse - from_pulse);
+        step_dir = 1;
+    } else {
+        steps    = (uint32_t)(from_pulse - to_pulse);
+        step_dir = -1;
+    }
+
+    /* 每步延时 = 总时长 ÷ 步数, 至少 1ms */
+    uint32_t delay_per_step = (steps > 0) ? (duration_ms / steps) : 1;
+    if (delay_per_step < 1)  delay_per_step = 1;
+
+    uint16_t pulse = from_pulse;
+    for (uint32_t i = 0; i < steps; i++) {
+        pulse += (int16_t)step_dir;
+        DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, pulse,
+                                        DL_TIMER_CC_1_INDEX);
+        delay_ms(delay_per_step);
+    }
+    /* 确保最终值精确到位 */
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, to_pulse,
+                                    DL_TIMER_CC_1_INDEX);
+}
+
 static void pd42s1_homing_demo(void)
 {
     char str[32];
 
-    /* 30° 对应脉宽偏移量 (15/360 × 25600 / 12.8 ≈ 83 µs, 30° = 166 µs) */
+    /* 30° 对应脉宽偏移量 = 166 µs */
     const uint16_t OFFSET_30D = 166U;
-    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_30D;
-    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_30D;
+    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_30D;   /* 1666 µs */
+    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_30D;   /* 1334 µs */
+    const uint32_t RAMP_MS   = 1200;   /* 每段斜坡时长 1.2 秒, 约 7 µs/步进 */
 
     OLED_Clear();
     OLED_ShowLineString(1, 1, "PD42S1 Homing");
     OLED_Refresh();
     delay_ms(500);
 
-    /* ---- Step 1: 顺时针 15° ---- */
-    snprintf(str, sizeof(str), "CW +15  %uus", (unsigned)PULSE_CW);
+    /* ---- Step 1: 顺时针 30° (平滑斜坡) ---- */
+    snprintf(str, sizeof(str), "CW +30  %uus", (unsigned)PULSE_CW);
     OLED_ShowLineString(2, 1, str);
     OLED_Refresh();
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, PULSE_CW,
-                                    DL_TIMER_CC_1_INDEX);
-    delay_ms(2000);
+    pd42s1_smooth_move(BC_PWM_CENTER_US, PULSE_CW, RAMP_MS);
+    delay_ms(800);
 
-    /* ---- Step 2: 归位 (中心) ---- */
+    /* ---- Step 2: 归位 - 中心 (平滑斜坡) ---- */
     OLED_ShowLineString(2, 1, "Center  1500us");
     OLED_Refresh();
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
-                                    DL_TIMER_CC_1_INDEX);
-    delay_ms(1000);
+    pd42s1_smooth_move(PULSE_CW, BC_PWM_CENTER_US, RAMP_MS);
+    delay_ms(800);
 
-    /* ---- Step 3: 逆时针 15° ---- */
-    snprintf(str, sizeof(str), "CCW -15  %uus", (unsigned)PULSE_CCW);
+    /* ---- Step 3: 逆时针 30° (平滑斜坡) ---- */
+    snprintf(str, sizeof(str), "CCW -30  %uus", (unsigned)PULSE_CCW);
     OLED_ShowLineString(2, 1, str);
     OLED_Refresh();
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, PULSE_CCW,
-                                    DL_TIMER_CC_1_INDEX);
-    delay_ms(2000);
+    pd42s1_smooth_move(BC_PWM_CENTER_US, PULSE_CCW, RAMP_MS);
+    delay_ms(800);
 
-    /* ---- Step 4: 归位 ---- */
+    /* ---- Step 4: 归位 - 中心 (平滑斜坡) ---- */
     OLED_ShowLineString(2, 1, "Center  1500us");
     OLED_Refresh();
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
-                                    DL_TIMER_CC_1_INDEX);
+    pd42s1_smooth_move(PULSE_CCW, BC_PWM_CENTER_US, RAMP_MS);
     delay_ms(500);
 
     OLED_ShowLineString(3, 1, "Demo Done!");
