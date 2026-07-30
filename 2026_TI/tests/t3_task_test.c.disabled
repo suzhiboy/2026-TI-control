@@ -1,0 +1,182 @@
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "balance_control.h"
+#include "sys_state.h"
+#include "t3_task.h"
+
+static int failures;
+static int line_stop_count;
+static float last_reference_cm;
+static bool balance_enabled;
+static int balance_reset_count;
+
+void LineTrack_Stop(void)
+{
+    line_stop_count++;
+}
+
+void BalanceControl_SetReference(BalanceControl_t *bc, float x_ref_cm)
+{
+    (void)bc;
+    last_reference_cm = x_ref_cm;
+}
+
+void BalanceControl_Reset(BalanceControl_t *bc)
+{
+    (void)bc;
+    balance_reset_count++;
+}
+
+void BalanceControl_Enable(BalanceControl_t *bc, bool en)
+{
+    (void)bc;
+    balance_enabled = en;
+}
+
+static void expect_int(const char *name, int expected, int actual)
+{
+    if (expected != actual) {
+        fprintf(stderr, "FAIL %s: expected %d got %d\n", name, expected, actual);
+        failures++;
+    }
+}
+
+static void expect_bool(const char *name, bool expected, bool actual)
+{
+    if (expected != actual) {
+        fprintf(stderr, "FAIL %s: expected %d got %d\n", name, expected, actual);
+        failures++;
+    }
+}
+
+static void expect_float10(const char *name, int expected_tenths, float actual)
+{
+    int actual_tenths = (int)(actual * 10.0f);
+    if (expected_tenths != actual_tenths) {
+        fprintf(stderr, "FAIL %s: expected %.1f got %.3f\n",
+                name, (double)expected_tenths / 10.0, (double)actual);
+        failures++;
+    }
+}
+
+static void reset_fakes(void)
+{
+    failures = 0;
+    line_stop_count = 0;
+    last_reference_cm = 0.0f;
+    balance_enabled = false;
+    balance_reset_count = 0;
+    ControlState_Set(CONTROL_IDLE);
+}
+
+static void test_start_targets_positive_5cm(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    expect_bool("active after start", true, T3Task_IsActive());
+    expect_int("phase after start", T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
+    expect_int("target after start", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
+    expect_int("control state after start", CONTROL_STATIC_BALL, ControlState_Get());
+    expect_bool("balance enabled after start", true, balance_enabled);
+    expect_int("balance reset on start", 1, balance_reset_count);
+    expect_float10("reference after start", 50, last_reference_cm);
+    expect_bool("line stopped on start", true, line_stop_count > 0);
+}
+
+static void run_inside_target(uint8_t count, int16_t x_mm)
+{
+    for (uint8_t i = 0U; i < count; i++) {
+        T3Task_UpdateVision(true, x_mm);
+        T3Task_Run();
+    }
+}
+
+static void test_positive_arrival_switches_to_negative_after_confirm_ticks(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), 50);
+    expect_int("phase before confirm", T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
+    expect_int("target before confirm", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
+
+    run_inside_target(1U, 50);
+    expect_int("phase after positive arrival", T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+    expect_int("target after positive arrival", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
+    expect_float10("reference after positive arrival", -50, last_reference_cm);
+}
+
+static void test_invalid_vision_resets_arrival_confirmation(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), 49);
+    T3Task_UpdateVision(false, 49);
+    T3Task_Run();
+    T3Task_UpdateVision(true, 49);
+    T3Task_Run();
+
+    expect_int("phase after invalid reset", T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
+    expect_int("target after invalid reset", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
+}
+
+static void test_negative_arrival_enters_hold(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, -50);
+
+    expect_int("phase after negative arrival", T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("target while holding", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
+    expect_float10("reference while holding", -50, last_reference_cm);
+}
+
+static void test_stop_returns_idle_and_disables_balance(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+    T3Task_Stop();
+
+    expect_bool("inactive after stop", false, T3Task_IsActive());
+    expect_int("phase after stop", T3_PHASE_IDLE, T3Task_GetPhase());
+    expect_int("control state after stop", CONTROL_IDLE, ControlState_Get());
+    expect_bool("balance disabled after stop", false, balance_enabled);
+    expect_int("balance reset on stop", 2, balance_reset_count);
+}
+
+int main(void)
+{
+    test_start_targets_positive_5cm();
+    test_positive_arrival_switches_to_negative_after_confirm_ticks();
+    test_invalid_vision_resets_arrival_confirmation();
+    test_negative_arrival_enters_hold();
+    test_stop_returns_idle_and_disables_balance();
+
+    if (failures != 0) {
+        return EXIT_FAILURE;
+    }
+
+    printf("PASS t3 task state machine\n");
+    return EXIT_SUCCESS;
+}

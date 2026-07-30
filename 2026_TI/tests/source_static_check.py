@@ -22,6 +22,8 @@ def main():
     require("VisionUart_Init();" in empty_c, "empty.c must initialize VisionUart")
     require("VisionUart_Poll(control_ticks_10ms);" in empty_c, "empty.c must poll VisionUart")
     require("VISION_UART_INST_INT_IRQN" in empty_c, "empty.c must configure vision UART IRQ")
+    require("APP_AUTO_START_T3" in empty_c, "empty.c must expose the T3 auto-start switch")
+    require("T3Task_Start();" in empty_c, "empty.c must auto-start T3 when the switch is enabled")
 
     require("#define VISION_UART_INST" in board_config, "board_config must define vision UART instance fallback")
     require("UART0" in board_config, "vision UART fallback must use UART0")

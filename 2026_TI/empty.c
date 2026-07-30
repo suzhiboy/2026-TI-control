@@ -40,131 +40,21 @@
 #include "board_config.h"
 #include "balance_control.h"
 #include "sys_state.h"
-#include "encoder.h"
 #include "key_menu.h"
-#include "delay.h"
+#include "t3_task.h"
 #include <stdio.h>
+
+#ifndef APP_AUTO_START_T3
+#define APP_AUTO_START_T3  0
+#endif
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
-
-/* 循迹一圈参数 (赛道 ~6.14m) */
-#define TRACK_LAP_DISTANCE_CM        (614.0f)
-#define TRACK_LAP_STOP_DECEL_CM      (30.0f)    /* 最后 30cm 开始减速 */
-static float g_lap_start_distance = 0.0f;
-static bool  g_lap_completed = false;
-static bool  g_lap_decelerating = false;
-static uint32_t g_lap_time_seconds = 0;         /* T2 计时 (秒) */
-static bool  g_timer_running = false;
-
-/* IMU 偏航角辅助判据 (防止里程计打滑误判) */
-#define TRACK_LAP_YAW_THRESHOLD      (300.0f)   /* 累计偏航 ≥300° 才判一圈完成 */
-#define TRACK_LAP_YAW_DECEL_THRESHOLD (240.0f)  /* 累计偏航 ≥240° 才允许进入减速区 */
-static float g_start_yaw = 0.0f;                /* 起始航向角 */
-static float g_last_yaw = 0.0f;                 /* 上一帧航向角 (用于计算增量) */
-static float g_yaw_accumulated = 0.0f;          /* 累计偏航绝对值 (度) */
-
-/* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
-#define VISION_LOST_TIMEOUT_TICKS  50U
-
 static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
-/* ======================================================================== *
- *  PD42S1 平滑斜坡辅助函数 & 归位演示
- *
- *  映射计算:
- *    PD42S1 500~2500 µs → 0~25600 counts (线性)
- *    1 µs = 12.8 counts, 1 rev = 25600 counts = 360°
- *    30° = 30/360 × 25600 = 2133.3 counts → 166 µs
- *
- *  平滑原理:
- *    脉宽每次增减 1 µs, 配合间隔延时 → 电机位置连续微调, 无阶跃冲击
- * ======================================================================== */
-
-/**
- * @brief  平滑地将 PWM 脉宽从 from_pulse 过渡到 to_pulse
- * @param  from_pulse  起始脉宽 (µs)
- * @param  to_pulse    目标脉宽 (µs)
- * @param  duration_ms 过渡总时长 (ms)
- */
-static void pd42s1_smooth_move(uint16_t from_pulse, uint16_t to_pulse,
-                                uint32_t duration_ms)
-{
-    if (from_pulse == to_pulse) return;
-
-    uint32_t steps;
-    int32_t step_dir;
-    if (to_pulse > from_pulse) {
-        steps    = (uint32_t)(to_pulse - from_pulse);
-        step_dir = 1;
-    } else {
-        steps    = (uint32_t)(from_pulse - to_pulse);
-        step_dir = -1;
-    }
-
-    /* 每步延时 = 总时长 ÷ 步数, 至少 1ms */
-    uint32_t delay_per_step = (steps > 0) ? (duration_ms / steps) : 1;
-    if (delay_per_step < 1)  delay_per_step = 1;
-
-    uint16_t pulse = from_pulse;
-    for (uint32_t i = 0; i < steps; i++) {
-        pulse += (int16_t)step_dir;
-        DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, pulse,
-                                        DL_TIMER_CC_1_INDEX);
-        delay_ms(delay_per_step);
-    }
-    /* 确保最终值精确到位 */
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, to_pulse,
-                                    DL_TIMER_CC_1_INDEX);
-}
-
-static void pd42s1_homing_demo(void)
-{
-    char str[32];
-
-    /* 30° 对应脉宽偏移量 = 166 µs */
-    const uint16_t OFFSET_30D = 166U;
-    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_30D;   /* 1666 µs */
-    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_30D;   /* 1334 µs */
-    const uint32_t RAMP_MS   = 1200;   /* 每段斜坡时长 1.2 秒, 约 7 µs/步进 */
-
-    OLED_Clear();
-    OLED_ShowLineString(1, 1, "PD42S1 Homing");
-    OLED_Refresh();
-    delay_ms(500);
-
-    /* ---- Step 1: 顺时针 30° (平滑斜坡) ---- */
-    snprintf(str, sizeof(str), "CW +30  %uus", (unsigned)PULSE_CW);
-    OLED_ShowLineString(2, 1, str);
-    OLED_Refresh();
-    pd42s1_smooth_move(BC_PWM_CENTER_US, PULSE_CW, RAMP_MS);
-    delay_ms(800);
-
-    /* ---- Step 2: 归位 - 中心 (平滑斜坡) ---- */
-    OLED_ShowLineString(2, 1, "Center  1500us");
-    OLED_Refresh();
-    pd42s1_smooth_move(PULSE_CW, BC_PWM_CENTER_US, RAMP_MS);
-    delay_ms(800);
-
-    /* ---- Step 3: 逆时针 30° (平滑斜坡) ---- */
-    snprintf(str, sizeof(str), "CCW -30  %uus", (unsigned)PULSE_CCW);
-    OLED_ShowLineString(2, 1, str);
-    OLED_Refresh();
-    pd42s1_smooth_move(BC_PWM_CENTER_US, PULSE_CCW, RAMP_MS);
-    delay_ms(800);
-
-    /* ---- Step 4: 归位 - 中心 (平滑斜坡) ---- */
-    OLED_ShowLineString(2, 1, "Center  1500us");
-    OLED_Refresh();
-    pd42s1_smooth_move(PULSE_CCW, BC_PWM_CENTER_US, RAMP_MS);
-    delay_ms(500);
-
-    OLED_ShowLineString(3, 1, "Demo Done!");
-    OLED_Refresh();
-    delay_ms(500);
-}
+#define VISION_LOST_TIMEOUT_TICKS  50U
 
 int main(void)
 {
@@ -176,6 +66,7 @@ int main(void)
 
     BalanceControl_Init(&bc);
     BalanceControl_SetReference(&bc, 0.0f);
+    T3Task_AttachController(&bc);
 
     OLED_Init();
     OLED_Clear();
@@ -198,21 +89,17 @@ int main(void)
     VisionUart_Init();
     KeyMenu_Init();
 
-    LineTrack_Start(LineTrack_Get_BaseSpeed());
+    ControlState_Set(CONTROL_IDLE);
     DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
                                     DL_TIMER_CC_1_INDEX);
     DL_Timer_startCounter(PD42S1_PWM_INST);
-
-    /* ===== PD42S1 归位演示 (控制 ISR 尚未启动, 不会覆盖 PWM) ===== */
-    pd42s1_homing_demo();
-
+    KeyMenu_StartTask(TASK_T2);
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
-    /* ========== 初始 IDLE, 等待菜单系统启动任务 ========== */
-    ControlState_Set(CONTROL_IDLE);
-    g_lap_start_distance = -1.0f;   /* 负值表示未记录起始里程 */
-    g_lap_completed = false;
+#if APP_AUTO_START_T3
+    T3Task_Start();
+#endif
 
     while (1) {
         uint32_t now;
@@ -221,14 +108,13 @@ int main(void)
         Vofa_Poll();
         VisionUart_Poll(control_ticks_10ms);
 
-        /* 高频获取视觉数据, 更新全局变量供中断读取 */
         g_vision_ball = VisionUart_GetLatest();
+        T3Task_UpdateVision(g_vision_ball.valid, g_vision_ball.x_mm);
         if (g_vision_ball.valid) {
             BalanceControl_SetRawPosition(&bc,
                 (float)g_vision_ball.x_mm / 10.0f);
         }
 
-        /* ---- 运行当前任务 (按键菜单 RUNNING 态) ---- */
         if (KeyMenu_GetState() == SYS_RUNNING) {
             const TaskDef *task = KeyMenu_GetCurrentTask();
             if (task && task->run) {
@@ -236,66 +122,7 @@ int main(void)
             }
         }
 
-        /* ========== 循迹一圈完成检测 (同时支持 TRACK_ONLY / DYNAMIC_BALL) ========== */
-        if (g_control_state == CONTROL_TRACK_ONLY ||
-            g_control_state == CONTROL_DYNAMIC_BALL) {
-
-            /* 首次进入时记录起始里程/航向并启动计时 */
-            if (g_lap_start_distance < 0.0f) {
-                g_lap_start_distance = g_Encoder.distance_cm;
-                g_lap_completed = false;
-                g_lap_decelerating = false;
-                g_lap_time_seconds = 0;
-                g_timer_running = true;
-                g_start_yaw = current_attitude.yaw;
-                g_last_yaw  = current_attitude.yaw;
-                g_yaw_accumulated = 0.0f;
-            }
-
-            if (!g_lap_completed) {
-                /* ---- IMU 偏航角累计 (处理 0/360 跳变) ---- */
-                float yaw = current_attitude.yaw;
-                float delta = yaw - g_last_yaw;
-                if (delta > 180.0f)  delta -= 360.0f;
-                if (delta < -180.0f) delta += 360.0f;
-                if (delta < 0.0f)    delta = -delta;
-                g_yaw_accumulated += delta;
-                g_last_yaw = yaw;
-
-                float traveled = g_Encoder.distance_cm - g_lap_start_distance;
-
-                /* ---- 最后 30cm 减速 (里程 + IMU 双确认) ---- */
-                if (!g_lap_decelerating &&
-                    traveled >= (TRACK_LAP_DISTANCE_CM - TRACK_LAP_STOP_DECEL_CM) &&
-                    g_yaw_accumulated >= TRACK_LAP_YAW_DECEL_THRESHOLD) {
-                    g_lap_decelerating = true;
-                    LineTrack_SetBaseSpeed(LineTrack_Get_BaseSpeed() * 0.4f);
-                }
-
-                /* ---- 到达终点: 刹车 (里程 + IMU 双确认) ---- */
-                if (traveled >= TRACK_LAP_DISTANCE_CM &&
-                    g_yaw_accumulated >= TRACK_LAP_YAW_THRESHOLD) {
-                    g_lap_completed = true;
-                    g_timer_running = false;
-                    LineTrack_Brake();
-                }
-            }
-
-            /* ---- 刹车完成 → 切换到 IDLE ---- */
-            if (g_lap_completed && !LineTrack_IsRunning()) {
-                ControlState_Set(CONTROL_IDLE);
-            }
-        } else {
-            /* 离开 → 重置 */
-            g_lap_start_distance = -1.0f;
-            g_lap_completed = false;
-            g_lap_decelerating = false;
-            g_timer_running = false;
-            g_yaw_accumulated = 0.0f;
-        }
-
         now = control_ticks_10ms;
-
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
             Vofa_SendTelemetry();
@@ -304,24 +131,16 @@ int main(void)
         if ((uint32_t)(now - last_oled_tick) >= 10U) {
             last_oled_tick = now;
 
-            /* ---- 菜单信息 (Line 1~3) ---- */
             KeyMenu_OLED();
-
-            /* ---- Line 4: 循迹时显示偏航角 / 球控时显示小球 ---- */
-            if (g_control_state == CONTROL_TRACK_ONLY) {
-                /* T2: 显示偏航累计 vs 编码器里程 */
-                float traveled = (g_lap_start_distance >= 0.0f)
-                    ? (g_Encoder.distance_cm - g_lap_start_distance) : 0.0f;
-                sprintf(oled_str, "Y:%.0f D:%.0f",
-                    (double)g_yaw_accumulated, (double)traveled);
+            if (T3Task_IsActive()) {
+                sprintf(oled_str, "T3:%d X:%d",
+                    (int)T3Task_GetTargetMM(), (int)g_vision_ball.x_mm);
+            } else if (g_vision_ball.valid) {
+                sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
+                    (unsigned)g_vision_ball.conf_percent);
             } else {
                 mt6701_status = MT6701_Update(&mt6701);
-                if (g_vision_ball.valid) {
-                    sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
-                        (unsigned)g_vision_ball.conf_percent);
-                } else {
-                    sprintf(oled_str, "ball:LOST");
-                }
+                sprintf(oled_str, "ball:LOST");
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
@@ -336,22 +155,19 @@ void TIMER_0_INST_IRQHandler(void)
             static uint32_t lost_ticks = 0;
             bool need_balance = false;
 
-            /* ---- 按键扫描 (始终运行) ---- */
             KeyMenu_Scan();
 
-            /* ========== 控制算法调度 ========== */
             switch (g_control_state) {
-
                 case CONTROL_IDLE:
                     LineTrack_Stop();
                     BalanceControl_Reset(&bc);
-                    bc.pwm_pulse = 1500U;
+                    bc.pwm_pulse = BC_PWM_CENTER_US;
                     break;
 
                 case CONTROL_TRACK_ONLY:
                     LineTrack_Loop_10ms();
                     BalanceControl_Reset(&bc);
-                    bc.pwm_pulse = 1500U;
+                    bc.pwm_pulse = BC_PWM_CENTER_US;
                     break;
 
                 case CONTROL_STATIC_BALL:
@@ -366,7 +182,6 @@ void TIMER_0_INST_IRQHandler(void)
             }
 
             if (need_balance) {
-                /* 安全降级: 丢球超时则清除积分并回平 */
                 if (g_vision_ball.valid) {
                     lost_ticks = 0;
                     BalanceControl_Run(&bc);
@@ -376,7 +191,7 @@ void TIMER_0_INST_IRQHandler(void)
                         BalanceControl_Run(&bc);
                     } else {
                         BalanceControl_Reset(&bc);
-                        bc.pwm_pulse = 1500U;
+                        bc.pwm_pulse = BC_PWM_CENTER_US;
                     }
                 }
             }

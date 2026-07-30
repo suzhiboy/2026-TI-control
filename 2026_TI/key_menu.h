@@ -62,7 +62,7 @@ typedef enum {
 
 #define TASK_ID_MIN         (2)
 #define TASK_ID_MAX         (6)
-#define TASK_ID_DEFAULT     (4)    /* T4 默认任务 */
+#define TASK_ID_DEFAULT     (2)
 
 /* ======================================================================== *
  *  按键事件标志 (每个键独立)
@@ -113,6 +113,7 @@ typedef struct {
  *         系统初始状态 = MENU, 任务默认 = T4, target_mm = 0.
  */
 void KeyMenu_Init(void);
+void KeyMenu_StartTask(TaskID task_id);
 
 /**
  * @brief  10ms 周期按键扫描 + 状态机处理

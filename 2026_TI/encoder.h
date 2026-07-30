@@ -7,8 +7,9 @@
 #define WHEEL_DIAMETER_CM 4.8f
 #define ENCODER_RES       13.0f
 #define GEAR_RATIO        20.0f
+#define ENCODER_EDGE_MULT 2.0f
 #define PI_F              3.1415926f
-#define PULSE_TO_CM       ((WHEEL_DIAMETER_CM * PI_F) / (ENCODER_RES * GEAR_RATIO * 4.0f))
+#define PULSE_TO_CM       ((WHEEL_DIAMETER_CM * PI_F) / (ENCODER_RES * GEAR_RATIO * ENCODER_EDGE_MULT))
 
 typedef struct {
     int16_t speed_left;

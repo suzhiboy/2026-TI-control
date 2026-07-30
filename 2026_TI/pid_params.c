@@ -25,17 +25,17 @@ void PidParams_SetDefaults(PidTuningParams *params)
 
     params->line.kp = 0.3f;
     params->line.ki = 0.0f;
-    params->line.kd = 0.1f;
+    params->line.kd = 0.12f;
 
-    params->speed_left.kp = 15.0f;
+    params->speed_left.kp = 50.0f;
     params->speed_left.ki = 0.0f;
     params->speed_left.kd = 0.0f;
 
-    params->speed_right.kp = 15.0f;
+    params->speed_right.kp = 50.0f;
     params->speed_right.ki = 0.0f;
     params->speed_right.kd = 0.0f;
 
-    params->base_speed = 12.0f;
+    params->base_speed = 30.0f;
 }
 
 int PidParams_AreValid(const PidTuningParams *params)
