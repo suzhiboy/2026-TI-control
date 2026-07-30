@@ -65,6 +65,12 @@ static float g_start_yaw = 0.0f;                /* 起始航向角 */
 static float g_last_yaw = 0.0f;                 /* 上一帧航向角 (用于计算增量) */
 static float g_yaw_accumulated = 0.0f;          /* 累计偏航绝对值 (度) */
 
+/* ======================================================================== *
+ *  T3 静态球控轨迹规划 (静止, 0 → +5cm → -5cm, 限时 5s)
+ * ======================================================================== */
+static uint32_t task3_start_tick = 0;   /* 起始 control_ticks_10ms 值      */
+static uint8_t  task3_step = 0;         /* 阶段: 0=0→+5, 1=hold+5,         */
+                                        /*       2=+5→-5, 3=hold-5        */
 /* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
 
@@ -164,6 +170,103 @@ static void pd42s1_homing_demo(void)
     OLED_ShowLineString(3, 1, "Demo Done!");
     OLED_Refresh();
     delay_ms(500);
+}
+
+/* ======================================================================== *
+ *  T3 静态球控轨迹规划
+ *
+ *  最小加加速度 (Minimum Jerk) 轨迹:
+ *    s(τ) = 10τ³ - 15τ⁴ + 6τ⁵,  τ = t/T ∈ [0,1]
+ *    位置、速度、加速度全程连续, 无阶跃冲击.
+ *
+ *  时序:
+ *    Phase 0:   0 ms  ~ 2000 ms   0 → +5  cm
+ *    Phase 1: 2000 ms ~ 2500 ms   hold +5 cm
+ *    Phase 2: 2500 ms ~ 4500 ms   +5 → -5 cm
+ *    Phase 3: 4500 ms ~ 5000 ms+  hold -5 cm
+ * ======================================================================== */
+
+/**
+ * @brief  最小加加速度插值
+ * @param  t   当前时间 (s)
+ * @param  T   阶段总时长 (s)
+ * @param  x0  起始位置 (cm)
+ * @param  x1  目标位置 (cm)
+ * @return  平滑插值位置
+ */
+static float min_jerk(float t, float T, float x0, float x1)
+{
+    float tau;
+    float tau2, tau3;
+    float s;
+
+    if (t >= T) return x1;
+    if (t <= 0.0f) return x0;
+
+    tau  = t / T;
+    tau2 = tau * tau;
+    tau3 = tau2 * tau;
+    /* s = 10τ³ - 15τ⁴ + 6τ⁵ */
+    s = 10.0f * tau3 - 15.0f * tau2 * tau2 + 6.0f * tau3 * tau2;
+    return x0 + (x1 - x0) * s;
+}
+
+/**
+ * @brief  初始化 T3 轨迹 (由 key_menu T3_Init 调用)
+ */
+void Task3_InitTrajectory(void)
+{
+    task3_start_tick = control_ticks_10ms;
+    task3_step = 0;
+    BalanceControl_SetReference(&bc, 0.0f);
+    ControlState_Set(CONTROL_TASK3);
+}
+
+/**
+ * @brief  每 10ms 更新 T3 轨迹参考值 (由 key_menu T3_Run 调用)
+ */
+void Task3_UpdateTrajectory(void)
+{
+    uint32_t elapsed_ticks = control_ticks_10ms - task3_start_tick;
+    uint32_t t_ms = elapsed_ticks * 10U;   /* 每 tick = 10ms */
+
+    switch (task3_step) {
+
+        case 0:     /* Phase 0: 0 → +5 cm, 0~2000 ms */
+            if (t_ms >= 2000U) {
+                BalanceControl_SetReference(&bc, 5.0f);
+                task3_step = 1;
+            } else {
+                float ref = min_jerk((float)t_ms / 1000.0f, 2.0f, 0.0f, 5.0f);
+                BalanceControl_SetReference(&bc, ref);
+            }
+            break;
+
+        case 1:     /* Phase 1: hold at +5 cm, 2000~2500 ms */
+            BalanceControl_SetReference(&bc, 5.0f);
+            if (t_ms >= 2500U) {
+                task3_step = 2;
+            }
+            break;
+
+        case 2:     /* Phase 2: +5 → -5 cm, 2500~4500 ms */
+            if (t_ms >= 4500U) {
+                BalanceControl_SetReference(&bc, -5.0f);
+                task3_step = 3;
+            } else {
+                float t_local = ((float)t_ms - 2500.0f) / 1000.0f;
+                float ref = min_jerk(t_local, 2.0f, 5.0f, -5.0f);
+                BalanceControl_SetReference(&bc, ref);
+            }
+            break;
+
+        case 3:     /* Phase 3: hold at -5 cm, 4500 ms+ */
+            BalanceControl_SetReference(&bc, -5.0f);
+            break;
+
+        default:
+            break;
+    }
 }
 
 int main(void)
@@ -307,13 +410,19 @@ int main(void)
             /* ---- 菜单信息 (Line 1~3) ---- */
             KeyMenu_OLED();
 
-            /* ---- Line 4: 循迹时显示偏航角 / 球控时显示小球 ---- */
+            /* ---- Line 4: 循迹时显示偏航角 / T3 时显示轨迹 / 球控时显示小球 ---- */
             if (g_control_state == CONTROL_TRACK_ONLY) {
                 /* T2: 显示偏航累计 vs 编码器里程 */
                 float traveled = (g_lap_start_distance >= 0.0f)
                     ? (g_Encoder.distance_cm - g_lap_start_distance) : 0.0f;
                 sprintf(oled_str, "Y:%.0f D:%.0f",
                     (double)g_yaw_accumulated, (double)traveled);
+            } else if (g_control_state == CONTROL_TASK3) {
+                /* T3: 显示阶段/参考/实际位置 */
+                sprintf(oled_str, "S%d R:%+.1f P:%+.1f",
+                    (int)task3_step,
+                    (double)bc.x_ref,
+                    (double)bc.x_pos);
             } else {
                 mt6701_status = MT6701_Update(&mt6701);
                 if (g_vision_ball.valid) {
@@ -354,6 +463,7 @@ void TIMER_0_INST_IRQHandler(void)
                     bc.pwm_pulse = 1500U;
                     break;
 
+                case CONTROL_TASK3:
                 case CONTROL_STATIC_BALL:
                     LineTrack_Stop();
                     need_balance = true;

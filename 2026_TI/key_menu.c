@@ -31,9 +31,20 @@ static void T2_Stop(void)
     ControlState_Set(CONTROL_IDLE);
 }
 
-static void T3_Init(void)  { /* TODO: 静态摆球初始化 (target_mm 已设) */ }
-static void T3_Run(void)   { /* TODO: 摆球到 target_mm + 稳住 */ }
-static void T3_Stop(void)  { /* TODO: 停止摆球控制 */ }
+static void T3_Init(void)
+{
+    extern void Task3_InitTrajectory(void);
+    Task3_InitTrajectory();
+}
+static void T3_Run(void)
+{
+    extern void Task3_UpdateTrajectory(void);
+    Task3_UpdateTrajectory();
+}
+static void T3_Stop(void)
+{
+    ControlState_Set(CONTROL_IDLE);
+}
 
 static void T4_Init(void)  { /* TODO: A到B稳中心初始化 */ }
 static void T4_Run(void)   { /* TODO: 移动 + 稳球在中心 */ }

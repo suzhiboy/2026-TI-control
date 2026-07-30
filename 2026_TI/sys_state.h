@@ -27,6 +27,7 @@ typedef enum {
     CONTROL_TRACK_ONLY    = 1,    /* 纯循迹, 摆杆锁定水平                   */
     CONTROL_STATIC_BALL   = 2,    /* 小车停止, 运行平衡算法稳定小球           */
     CONTROL_DYNAMIC_BALL  = 3,    /* 循迹 + 平衡算法同时运行                 */
+    CONTROL_TASK3         = 4,    /* 执行要求3：静止状态下+5cm到-5cm        */
 } ControlState;
 
 /* ======================================================================== *
