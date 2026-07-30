@@ -165,6 +165,11 @@ void KeyMenu_SetFault(void);
  */
 const TaskDef *KeyMenu_GetCurrentTask(void);
 
+/* ======================================================================== *
+ *  T6 用户自定义目标位置
+ * ======================================================================== */
+extern float user_target_x_cm;           /* 范围 ±12.0 cm, 步进 1.0 cm      */
+
 #ifdef __cplusplus
 }
 #endif

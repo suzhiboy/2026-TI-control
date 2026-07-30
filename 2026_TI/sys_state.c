@@ -23,6 +23,10 @@ const char* ControlState_Name(ControlState s)
         case CONTROL_TRACK_ONLY:   return "TRACK_ONLY";
         case CONTROL_STATIC_BALL:  return "STATIC_BALL";
         case CONTROL_DYNAMIC_BALL: return "DYNAMIC_BALL";
+        case CONTROL_TASK3:        return "TASK3";
+        case CONTROL_TASK4:        return "TASK4";
+        case CONTROL_TASK5:        return "TASK5";
+        case CONTROL_TASK6:        return "TASK6";
         default:                   return "???";
     }
 }
