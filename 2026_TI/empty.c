@@ -58,6 +58,13 @@ static bool  g_lap_decelerating = false;
 static uint32_t g_lap_time_seconds = 0;         /* T2 计时 (秒) */
 static bool  g_timer_running = false;
 
+/* IMU 偏航角辅助判据 (防止里程计打滑误判) */
+#define TRACK_LAP_YAW_THRESHOLD      (300.0f)   /* 累计偏航 ≥300° 才判一圈完成 */
+#define TRACK_LAP_YAW_DECEL_THRESHOLD (240.0f)  /* 累计偏航 ≥240° 才允许进入减速区 */
+static float g_start_yaw = 0.0f;                /* 起始航向角 */
+static float g_last_yaw = 0.0f;                 /* 上一帧航向角 (用于计算增量) */
+static float g_yaw_accumulated = 0.0f;          /* 累计偏航绝对值 (度) */
+
 /* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
 
@@ -233,28 +240,41 @@ int main(void)
         if (g_control_state == CONTROL_TRACK_ONLY ||
             g_control_state == CONTROL_DYNAMIC_BALL) {
 
-            /* 首次进入时记录起始里程并启动计时 */
+            /* 首次进入时记录起始里程/航向并启动计时 */
             if (g_lap_start_distance < 0.0f) {
                 g_lap_start_distance = g_Encoder.distance_cm;
                 g_lap_completed = false;
                 g_lap_decelerating = false;
                 g_lap_time_seconds = 0;
                 g_timer_running = true;
+                g_start_yaw = current_attitude.yaw;
+                g_last_yaw  = current_attitude.yaw;
+                g_yaw_accumulated = 0.0f;
             }
 
             if (!g_lap_completed) {
+                /* ---- IMU 偏航角累计 (处理 0/360 跳变) ---- */
+                float yaw = current_attitude.yaw;
+                float delta = yaw - g_last_yaw;
+                if (delta > 180.0f)  delta -= 360.0f;
+                if (delta < -180.0f) delta += 360.0f;
+                if (delta < 0.0f)    delta = -delta;
+                g_yaw_accumulated += delta;
+                g_last_yaw = yaw;
+
                 float traveled = g_Encoder.distance_cm - g_lap_start_distance;
 
-                /* ---- 最后 30cm 开始减速 ---- */
+                /* ---- 最后 30cm 减速 (里程 + IMU 双确认) ---- */
                 if (!g_lap_decelerating &&
-                    traveled >= (TRACK_LAP_DISTANCE_CM - TRACK_LAP_STOP_DECEL_CM)) {
+                    traveled >= (TRACK_LAP_DISTANCE_CM - TRACK_LAP_STOP_DECEL_CM) &&
+                    g_yaw_accumulated >= TRACK_LAP_YAW_DECEL_THRESHOLD) {
                     g_lap_decelerating = true;
-                    /* 降速到 40% */
                     LineTrack_SetBaseSpeed(LineTrack_Get_BaseSpeed() * 0.4f);
                 }
 
-                /* ---- 到达终点: 刹车 ---- */
-                if (traveled >= TRACK_LAP_DISTANCE_CM) {
+                /* ---- 到达终点: 刹车 (里程 + IMU 双确认) ---- */
+                if (traveled >= TRACK_LAP_DISTANCE_CM &&
+                    g_yaw_accumulated >= TRACK_LAP_YAW_THRESHOLD) {
                     g_lap_completed = true;
                     g_timer_running = false;
                     LineTrack_Brake();
@@ -271,6 +291,7 @@ int main(void)
             g_lap_completed = false;
             g_lap_decelerating = false;
             g_timer_running = false;
+            g_yaw_accumulated = 0.0f;
         }
 
         now = control_ticks_10ms;
@@ -286,13 +307,21 @@ int main(void)
             /* ---- 菜单信息 (Line 1~3) ---- */
             KeyMenu_OLED();
 
-            /* ---- Line 4: 小球 / 传感器 ---- */
-            mt6701_status = MT6701_Update(&mt6701);
-            if (g_vision_ball.valid) {
-                sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
-                    (unsigned)g_vision_ball.conf_percent);
+            /* ---- Line 4: 循迹时显示偏航角 / 球控时显示小球 ---- */
+            if (g_control_state == CONTROL_TRACK_ONLY) {
+                /* T2: 显示偏航累计 vs 编码器里程 */
+                float traveled = (g_lap_start_distance >= 0.0f)
+                    ? (g_Encoder.distance_cm - g_lap_start_distance) : 0.0f;
+                sprintf(oled_str, "Y:%.0f D:%.0f",
+                    (double)g_yaw_accumulated, (double)traveled);
             } else {
-                sprintf(oled_str, "ball:LOST");
+                mt6701_status = MT6701_Update(&mt6701);
+                if (g_vision_ball.valid) {
+                    sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
+                        (unsigned)g_vision_ball.conf_percent);
+                } else {
+                    sprintf(oled_str, "ball:LOST");
+                }
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
