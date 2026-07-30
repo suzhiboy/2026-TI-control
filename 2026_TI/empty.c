@@ -58,13 +58,6 @@ static bool  g_lap_completed = false;
 /* 丢球超时阈值 (50 ticks × 10ms = 500ms 未收到有效数据触发) */
 #define VISION_LOST_TIMEOUT_TICKS  50U
 
-/* PD42S1 步进电机 UART 写回调 (发送 F5H 指令使能 PWM 位置模式) */
-static void pd42s1_uart_write(const uint8_t *data, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; i++) {
-        DL_UART_Main_transmitData(IMU601_INST, data[i]);
-    }
-}
 static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
@@ -80,10 +73,10 @@ static void pd42s1_homing_demo(void)
 {
     char str[32];
 
-    /* 15° 对应脉宽偏移量 */
-    const uint16_t OFFSET_15D = 83U;
-    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_15D;
-    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_15D;
+    /* 30° 对应脉宽偏移量 (15/360 × 25600 / 12.8 ≈ 83 µs, 30° = 166 µs) */
+    const uint16_t OFFSET_30D = 166U;
+    const uint16_t PULSE_CW  = BC_PWM_CENTER_US + OFFSET_30D;
+    const uint16_t PULSE_CCW = BC_PWM_CENTER_US - OFFSET_30D;
 
     OLED_Clear();
     OLED_ShowLineString(1, 1, "PD42S1 Homing");
@@ -134,39 +127,7 @@ int main(void)
     SYSCFG_DL_init();
 
     BalanceControl_Init(&bc);
-    BalanceControl_PD42S1_Init(pd42s1_uart_write);
     BalanceControl_SetReference(&bc, 0.0f);
-
-    /* 配置 PD42S1 PWM 输出: PB18 作为 TIMA1_CC1 */
-    DL_GPIO_initPeripheralOutputFunction(IOMUX_PINCM44,
-                                         IOMUX_PINCM44_PF_TIMA1_CCP1);
-    DL_Timer_setCCPDirection(PD42S1_PWM_INST, DL_TIMER_CC1_OUTPUT);
-
-    /*
-     * ！！！关键修复：配置 CCP1 输出控制 + 信号发生器动作 ！！！
-     * ==========================================================
-     * TIMA1 在 PERIODIC_UP 模式下, SysConfig 不会自动配置 CCP
-     * 输出通道, 以下两项必须手动添加:
-     *
-     *   1. setCaptureCompareOutCtl — 让 CCP1 引脚受信号发生器驱动
-     *   2. setCaptureCompareAction — 定义匹配/归零时的引脚动作
-     *
-     * 动作策略 — 产生脉宽 = CC×1µs 的正脉冲 (50Hz):
-     *   ZACT→HIGH (计数值归零时拉高=脉宽开始)
-     *   CUACT→LOW  (计数值匹配时拉低=脉宽结束)
-     *   1500→1500µs HIGH, 500→500µs, 2500→2500µs
-     */
-    DL_Timer_setCaptureCompareOutCtl(PD42S1_PWM_INST,
-        DL_TIMER_CC_OCTL_INIT_VAL_LOW,
-        DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
-        DL_TIMER_CC_OCTL_SRC_FUNCVAL,
-        DL_TIMER_CC_1_INDEX);
-    DL_Timer_setCaptureCompareAction(PD42S1_PWM_INST,
-        DL_TIMER_CC_CUACT_CCP_LOW | DL_TIMER_CC_ZACT_CCP_HIGH,
-        DL_TIMER_CC_1_INDEX);
-
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, 1500U,
-                                    DL_TIMER_CC_1_INDEX);
 
     OLED_Init();
     OLED_Clear();
