@@ -5,17 +5,31 @@
  */
 
 #include "key_menu.h"
+#include "line_follow.h"
 #include "oled.h"
 #include "board_config.h"
+#include "sys_state.h"
 #include <stdio.h>
 
 /* ======================================================================== *
  *  任务占位函数 (后续对接实际控制代码)
  * ======================================================================== */
 
-static void T2_Init(void)  { /* TODO: 循迹一圈停车初始化 */ }
-static void T2_Run(void)   { /* TODO: 循迹 + 停车控制循环 */ }
-static void T2_Stop(void)  { /* TODO: 停车, 关闭电机 */ }
+static void T2_Init(void)
+{
+    /* T2: 纯循迹, 不需要稳球 */
+    ControlState_Set(CONTROL_TRACK_ONLY);
+    LineTrack_Start(LineTrack_Get_BaseSpeed());
+}
+static void T2_Run(void)
+{
+    /* 控制算法由 10ms ISR 统一调度, 此处无需操作 */
+}
+static void T2_Stop(void)
+{
+    /* ISR 中 CONTROL_IDLE 分支会停电机 + 复位积分 + PWM=1500 */
+    ControlState_Set(CONTROL_IDLE);
+}
 
 static void T3_Init(void)  { /* TODO: 静态摆球初始化 (target_mm 已设) */ }
 static void T3_Run(void)   { /* TODO: 摆球到 target_mm + 稳住 */ }
