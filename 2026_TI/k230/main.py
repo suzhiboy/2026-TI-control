@@ -78,7 +78,7 @@ RGB888P_SIZE = [AI_FRAME_WIDTH, AI_FRAME_HEIGHT]
 USE_ROI_REFINE = False
 DRAW_RESULT = True
 SHOW_IMAGE = True
-DEBUG_FRAME_STATUS = True
+DEBUG_FRAME_STATUS = False
 PRINT_MEMORY = False
 STOP_AFTER_SECONDS = 0
 UART_FRAME_MODE = "compact_csv"  # compact_csv or legacy_ball
@@ -145,7 +145,7 @@ TERMINAL_PRINT_EVERY_N_FRAMES = 30
 LOST_SEND_EVERY_N_FRAMES = 5
 MEMORY_PRINT_EVERY_N_FRAMES = 30
 GC_EVERY_N_FRAMES = 30
-MAIN_LOOP_SLEEP_MS = 2
+MAIN_LOOP_SLEEP_MS = 0
 
 
 def file_exists(path):
@@ -1777,7 +1777,6 @@ def main():
         frame_size = [AI_FRAME_WIDTH, AI_FRAME_HEIGHT]
 
         while True:
-            os.exitpoint()
             if STOP_AFTER_SECONDS > 0:
                 elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ms)
                 if elapsed_ms >= STOP_AFTER_SECONDS * 1000:

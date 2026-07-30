@@ -12,6 +12,9 @@
 #define VISION_TIMEOUT_TICKS 20U
 #define VISION_X_MM_MIN (-120)
 #define VISION_X_MM_MAX (120)
+#define VISION_CX_MAX (799)
+#define VISION_CY_MAX (479)
+#define VISION_QUALITY_MAX (100U)
 #define VISION_FPS_MAX (120U)
 
 static volatile char vision_rx_buf[VISION_RX_BUF_SIZE];
@@ -120,47 +123,29 @@ static bool parse_conf_percent(const char *text, uint8_t *out)
     return true;
 }
 
-static bool split_csv_5(char *line, char **f0, char **f1, char **f2,
-                        char **f3, char **f4)
+static bool split_csv_fields(char *line, char **fields, size_t field_count)
 {
-    char *p1;
-    char *p2;
-    char *p3;
-    char *p4;
+    size_t i;
+    char *cursor;
 
-    p1 = strchr(line, ',');
-    if (p1 == NULL) {
-        return false;
-    }
-    *p1++ = '\0';
-
-    p2 = strchr(p1, ',');
-    if (p2 == NULL) {
-        return false;
-    }
-    *p2++ = '\0';
-
-    p3 = strchr(p2, ',');
-    if (p3 == NULL) {
-        return false;
-    }
-    *p3++ = '\0';
-
-    p4 = strchr(p3, ',');
-    if (p4 == NULL) {
-        return false;
-    }
-    *p4++ = '\0';
-
-    if (strchr(p4, ',') != NULL) {
+    if ((line == NULL) || (fields == NULL) || (field_count == 0U)) {
         return false;
     }
 
-    *f0 = line;
-    *f1 = p1;
-    *f2 = p2;
-    *f3 = p3;
-    *f4 = p4;
+    cursor = line;
+    fields[0] = cursor;
+    for (i = 1U; i < field_count; i++) {
+        cursor = strchr(cursor, ',');
+        if (cursor == NULL) {
+            return false;
+        }
+        *cursor++ = '\0';
+        fields[i] = cursor;
+    }
+
+    if (strchr(fields[field_count - 1U], ',') != NULL) {
+        return false;
+    }
     return true;
 }
 
@@ -169,11 +154,10 @@ VisionParseResult VisionProtocol_ParseLine(const char *line,
                                            uint32_t now_tick_10ms)
 {
     char local[VISION_RX_BUF_SIZE];
-    char *f0;
-    char *f1;
-    char *f2;
-    char *f3;
-    char *f4;
+    char *fields[9];
+    uint8_t valid_field;
+    int16_t cx_field;
+    int16_t cy_field;
     VisionBallData parsed;
 
     if ((line == NULL) || (out == NULL) || (line[0] == '\0')) {
@@ -192,16 +176,57 @@ VisionParseResult VisionProtocol_ParseLine(const char *line,
         return VISION_PARSE_OK;
     }
 
+    if (strncmp(line, "B,", 2) == 0) {
+        strncpy(local, line, sizeof(local) - 1U);
+        local[sizeof(local) - 1U] = '\0';
+        if (!split_csv_fields(local, fields, 9U)) {
+            return VISION_PARSE_BAD_VALUE;
+        }
+
+        memset(&parsed, 0, sizeof(parsed));
+        parsed.last_update_tick = now_tick_10ms;
+        if ((strcmp(fields[0], "B") != 0) ||
+            !parse_u16_field(fields[1], &parsed.seq) ||
+            !parse_u8_range_field(fields[2], 1U, &valid_field) ||
+            !parse_i16_range_field(fields[3], VISION_X_MM_MIN,
+                                   VISION_X_MM_MAX, &parsed.x_mm) ||
+            !parse_i16_range_field(fields[4], VISION_X_MM_MIN,
+                                   VISION_X_MM_MAX, &parsed.raw_x_mm) ||
+            !parse_i16_range_field(fields[5], 0, VISION_CX_MAX, &cx_field) ||
+            !parse_i16_range_field(fields[6], 0, VISION_CY_MAX, &cy_field) ||
+            !parse_u8_range_field(fields[7], VISION_QUALITY_MAX,
+                                  &parsed.quality) ||
+            !parse_u8_range_field(fields[8], VISION_FPS_MAX, &parsed.fps)) {
+            return VISION_PARSE_BAD_VALUE;
+        }
+
+        parsed.valid = (valid_field == 1U);
+        parsed.lost = !parsed.valid;
+        parsed.cx = (uint16_t)cx_field;
+        parsed.cy = (uint16_t)cy_field;
+        parsed.conf_percent = parsed.quality;
+        if (!parsed.valid) {
+            parsed.x_mm = 0;
+            parsed.raw_x_mm = 0;
+            parsed.cx = 0U;
+            parsed.cy = 0U;
+            parsed.quality = 0U;
+            parsed.conf_percent = 0U;
+        }
+        *out = parsed;
+        return VISION_PARSE_OK;
+    }
+
     if (strncmp(line, "BALL,", 5) != 0) {
         return VISION_PARSE_UNKNOWN;
     }
 
     strncpy(local, line, sizeof(local) - 1U);
     local[sizeof(local) - 1U] = '\0';
-    if (!split_csv_5(local, &f0, &f1, &f2, &f3, &f4)) {
+    if (!split_csv_fields(local, fields, 5U)) {
         return VISION_PARSE_BAD_VALUE;
     }
-    if (strcmp(f0, "BALL") != 0) {
+    if (strcmp(fields[0], "BALL") != 0) {
         return VISION_PARSE_UNKNOWN;
     }
 
@@ -210,13 +235,16 @@ VisionParseResult VisionProtocol_ParseLine(const char *line,
     parsed.lost = false;
     parsed.last_update_tick = now_tick_10ms;
 
-    if (!parse_u16_field(f1, &parsed.seq) ||
-        !parse_i16_range_field(f2, VISION_X_MM_MIN, VISION_X_MM_MAX,
+    if (!parse_u16_field(fields[1], &parsed.seq) ||
+        !parse_i16_range_field(fields[2], VISION_X_MM_MIN, VISION_X_MM_MAX,
                                &parsed.x_mm) ||
-        !parse_conf_percent(f3, &parsed.conf_percent) ||
-        !parse_u8_range_field(f4, VISION_FPS_MAX, &parsed.fps)) {
+        !parse_conf_percent(fields[3], &parsed.conf_percent) ||
+        !parse_u8_range_field(fields[4], VISION_FPS_MAX, &parsed.fps)) {
         return VISION_PARSE_BAD_VALUE;
     }
+
+    parsed.raw_x_mm = parsed.x_mm;
+    parsed.quality = parsed.conf_percent;
 
     *out = parsed;
     return VISION_PARSE_OK;
