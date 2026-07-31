@@ -57,6 +57,28 @@ static void test_parse_lost_line(void)
     expect_int("lost update tick", 8, (int)data.last_update_tick);
 }
 
+static void test_parse_compact_ball_line(void)
+{
+    VisionBallData data;
+    VisionParseResult result;
+
+    memset(&data, 0, sizeof(data));
+    result = VisionProtocol_ParseLine("B,12,1,37,39,410,222,86,24", &data, 11U);
+
+    expect_int("parse compact result", VISION_PARSE_OK, result);
+    expect_bool("compact valid", true, data.valid);
+    expect_bool("compact lost", false, data.lost);
+    expect_int("compact seq", 12, data.seq);
+    expect_int("compact x mm", 37, data.x_mm);
+    expect_int("compact raw x mm", 39, data.raw_x_mm);
+    expect_int("compact cx", 410, data.cx);
+    expect_int("compact cy", 222, data.cy);
+    expect_int("compact quality", 86, data.quality);
+    expect_int("compact conf percent", 86, data.conf_percent);
+    expect_int("compact fps", 24, data.fps);
+    expect_int("compact update tick", 11, (int)data.last_update_tick);
+}
+
 static void test_reject_bad_lines(void)
 {
     VisionBallData data;
@@ -97,6 +119,7 @@ int main(void)
 {
     test_parse_ball_line();
     test_parse_lost_line();
+    test_parse_compact_ball_line();
     test_reject_bad_lines();
     test_rx_line_buffer_and_timeout();
 

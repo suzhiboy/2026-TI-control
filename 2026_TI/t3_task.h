@@ -12,7 +12,8 @@ extern "C" {
 #define T3_POSITIVE_TARGET_MM      (50)
 #define T3_NEGATIVE_TARGET_MM      (-50)
 #define T3_TARGET_TOLERANCE_MM     (10)
-#define T3_ARRIVAL_CONFIRM_TICKS   (5U)
+#define T3_ARRIVAL_CONFIRM_TICKS   (2U)
+#define T3_REF_RAMP_MM_PER_TICK    (0.4f)
 
 typedef enum {
     T3_PHASE_IDLE = 0,

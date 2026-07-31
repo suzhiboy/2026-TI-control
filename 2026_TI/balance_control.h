@@ -71,18 +71,24 @@ extern "C" {
 /* PD42S1 步进电机 PWM 约束 */
 #define BC_PWM_MIN_US               (500U)          /* 最小脉宽        µs   */
 #define BC_PWM_MAX_US               (2500U)         /* 最大脉宽        µs   */
-#define BC_PWM_CENTER_US            (1500U)         /* 中位 (θ=0)     µs   */
+#define BC_PWM_CENTER_US            (1550U)         /* 中位 (θ=0)     µs   */
 #define BC_PWM_RANGE_US             (1000U)         /* 单侧范围        µs   */
 #define BC_PWM_PERIOD_US            (20000U)        /* 50 Hz 周期      µs   */
+#define BC_PWM_DELTA_LIMIT_US       (400U)
+#define BC_PWM_MIN_DRIVE_US         (175U)
+#define BC_PWM_SLEW_LIMIT_US        (10U)
+#define BC_PWM_DIRECTION_SIGN       (-1.0f)
+#define BC_RAD_TO_PWM_SCALE_DEFAULT (10000.0f)
+#define BC_MIN_DRIVE_ERROR_CM       (1.5f)
 
 /* 安全限幅 */
-#define BC_ANGLE_MAX_RAD            (0.15f)         /* 最大安全倾角 ≈ 8.6° */
-#define BC_ACCEL_MAX_MS2            (8.0f)          /* 最大期望加速度 m/s² */
+#define BC_ANGLE_MAX_RAD            (0.04f)         /* 初调最大倾角 ≈ 2.3° */
+#define BC_ACCEL_MAX_MS2            (0.7f)          /* 初调最大期望加速度 m/s² */
 
 /* 默认 PID 参数 (需现场整定) */
-#define BC_DEFAULT_POS_KP           (12.0f)         /* 位置外环 比例增益    */
-#define BC_DEFAULT_POS_KD           (2.0f)          /* 位置外环 微分增益    */
-#define BC_DEFAULT_VEL_KP           (1.5f)          /* 速度内环 比例增益    */
+#define BC_DEFAULT_POS_KP           (0.12f)         /* 位置外环 比例增益    */
+#define BC_DEFAULT_POS_KD           (0.018f)        /* 位置外环 微分增益    */
+#define BC_DEFAULT_VEL_KP           (0.006f)        /* 速度内环 比例增益    */
 
 /* 低通滤波器系数 (100 Hz 采样) */
 #define BC_LPF_ALPHA_POS            (0.20f)         /* 位置 LPF 系数        */

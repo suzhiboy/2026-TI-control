@@ -7,6 +7,7 @@
 typedef struct {
     bool valid;
     bool lost;
+    bool timed_out;
     uint16_t seq;
     int16_t x_mm;
     int16_t raw_x_mm;

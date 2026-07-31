@@ -62,6 +62,19 @@ static inline uint16_t u16clamp(uint16_t val, uint16_t lo, uint16_t hi)
     return (val < lo) ? lo : ((val > hi) ? hi : val);
 }
 
+static inline float slew_limit_pwm(float target, float previous)
+{
+    float diff = target - previous;
+
+    if (diff > (float)BC_PWM_SLEW_LIMIT_US) {
+        return previous + (float)BC_PWM_SLEW_LIMIT_US;
+    }
+    if (diff < -(float)BC_PWM_SLEW_LIMIT_US) {
+        return previous - (float)BC_PWM_SLEW_LIMIT_US;
+    }
+    return target;
+}
+
 /* ======================================================================== *
  *  内部工具: 浮点绝对值 (union 避免 strict-aliasing 问题)
  * ======================================================================== */
@@ -170,7 +183,7 @@ void BalanceControl_Init(BalanceControl_t *bc)
      *   3) 读取稳定后的 PWM 值 P₀
      *   4) scale = |P₀ - PWM_CENTER| / |θ₀|
      */
-    bc->rad_to_pwm_scale = (float)BC_PWM_RANGE_US / BC_ANGLE_MAX_RAD;
+    bc->rad_to_pwm_scale = BC_RAD_TO_PWM_SCALE_DEFAULT;
     bc->pwm_neutral       = (float)BC_PWM_CENTER_US;
 
     /* --- 输出 --- */
@@ -282,7 +295,7 @@ void BalanceControl_SetPwmScale(BalanceControl_t *bc, float scale)
     if (bc_unlikely(bc == NULL)) return;
 
     /* 有效 scale 至少 100, 防止被意外 0 值除 */
-    bc->rad_to_pwm_scale = (scale > 100.0f) ? scale : 6667.0f;
+    bc->rad_to_pwm_scale = (scale > 100.0f) ? scale : BC_RAD_TO_PWM_SCALE_DEFAULT;
 }
 
 /* ------------------------------------------------------------------ */
@@ -466,8 +479,30 @@ void BalanceControl_Run(BalanceControl_t *bc)
      *  相对误差 < 1e-6, 替代 sinf() 以规避软件仿真开销.
      * ---------------------------------------------------------------- */
     {
-        float pwm_float = bc->pwm_neutral
-                        + fast_sin_small(bc->theta_target) * bc->rad_to_pwm_scale;
+        float pwm_delta = BC_PWM_DIRECTION_SIGN *
+                          fast_sin_small(bc->theta_target) *
+                          bc->rad_to_pwm_scale;
+        float pwm_float;
+        float pos_error = bc->x_ref - bc->x_pos;
+
+        if (fabsf_(pos_error) >= BC_MIN_DRIVE_ERROR_CM) {
+            float abs_delta = fabsf_(pwm_delta);
+            if ((abs_delta > 0.001f) &&
+                (abs_delta < (float)BC_PWM_MIN_DRIVE_US)) {
+                pwm_delta = (pwm_delta > 0.0f) ?
+                    (float)BC_PWM_MIN_DRIVE_US :
+                    -(float)BC_PWM_MIN_DRIVE_US;
+            } else if (abs_delta <= 0.001f) {
+                pwm_delta = (pos_error > 0.0f) ?
+                    (float)BC_PWM_MIN_DRIVE_US :
+                    -(float)BC_PWM_MIN_DRIVE_US;
+            }
+        }
+
+        pwm_delta = fclamp(pwm_delta,
+                           -(float)BC_PWM_DELTA_LIMIT_US,
+                           (float)BC_PWM_DELTA_LIMIT_US);
+        pwm_float = bc->pwm_neutral + pwm_delta;
 
         /* 硬限幅 [500, 2500] — 最后一道安全防线! */
         if (pwm_float < (float)BC_PWM_MIN_US) {
@@ -475,6 +510,8 @@ void BalanceControl_Run(BalanceControl_t *bc)
         } else if (pwm_float > (float)BC_PWM_MAX_US) {
             pwm_float = (float)BC_PWM_MAX_US;
         }
+
+        pwm_float = slew_limit_pwm(pwm_float, (float)bc->pwm_pulse);
 
         bc->pwm_pulse = (uint16_t)(pwm_float + 0.5f);   /* 四舍五入 */
     }

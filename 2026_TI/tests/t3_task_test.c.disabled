@@ -61,9 +61,18 @@ static void expect_float10(const char *name, int expected_tenths, float actual)
     }
 }
 
+static void expect_float100(const char *name, int expected_hundredths, float actual)
+{
+    int actual_hundredths = (int)(actual * 100.0f + ((actual >= 0.0f) ? 0.5f : -0.5f));
+    if (expected_hundredths != actual_hundredths) {
+        fprintf(stderr, "FAIL %s: expected %.2f got %.3f\n",
+                name, (double)expected_hundredths / 100.0, (double)actual);
+        failures++;
+    }
+}
+
 static void reset_fakes(void)
 {
-    failures = 0;
     line_stop_count = 0;
     last_reference_cm = 0.0f;
     balance_enabled = false;
@@ -85,8 +94,24 @@ static void test_start_targets_positive_5cm(void)
     expect_int("control state after start", CONTROL_STATIC_BALL, ControlState_Get());
     expect_bool("balance enabled after start", true, balance_enabled);
     expect_int("balance reset on start", 1, balance_reset_count);
-    expect_float10("reference after start", 50, last_reference_cm);
+    expect_float10("reference after start", 0, last_reference_cm);
     expect_bool("line stopped on start", true, line_stop_count > 0);
+}
+
+static void test_reference_ramps_toward_positive_target(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    T3Task_UpdateVision(true, 0);
+    T3Task_Run();
+    expect_float100("reference after one tick", 4, last_reference_cm);
+
+    T3Task_Run();
+    expect_float100("reference after two ticks", 8, last_reference_cm);
 }
 
 static void run_inside_target(uint8_t count, int16_t x_mm)
@@ -112,7 +137,27 @@ static void test_positive_arrival_switches_to_negative_after_confirm_ticks(void)
     run_inside_target(1U, 50);
     expect_int("phase after positive arrival", T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
     expect_int("target after positive arrival", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
-    expect_float10("reference after positive arrival", -50, last_reference_cm);
+    T3Task_Run();
+    expect_float100("reference starts ramping negative", 4, last_reference_cm);
+}
+
+static void test_positive_overshoot_switches_to_negative_after_confirm_ticks(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), 120);
+    expect_int("phase before positive overshoot confirm", T3_PHASE_TO_POSITIVE,
+               T3Task_GetPhase());
+
+    run_inside_target(1U, 120);
+    expect_int("phase after positive overshoot", T3_PHASE_TO_NEGATIVE,
+               T3Task_GetPhase());
+    expect_int("target after positive overshoot", T3_NEGATIVE_TARGET_MM,
+               T3Task_GetTargetMM());
 }
 
 static void test_invalid_vision_resets_arrival_confirmation(void)
@@ -133,6 +178,26 @@ static void test_invalid_vision_resets_arrival_confirmation(void)
     expect_int("target after invalid reset", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
 }
 
+static void test_negative_overshoot_enters_hold_after_confirm_ticks(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), -120);
+    expect_int("phase before negative overshoot confirm", T3_PHASE_TO_NEGATIVE,
+               T3Task_GetPhase());
+
+    run_inside_target(1U, -120);
+    expect_int("phase after negative overshoot", T3_PHASE_HOLD_NEGATIVE,
+               T3Task_GetPhase());
+    expect_int("target while holding after overshoot", T3_NEGATIVE_TARGET_MM,
+               T3Task_GetTargetMM());
+}
+
 static void test_negative_arrival_enters_hold(void)
 {
     BalanceControl_t controller;
@@ -146,7 +211,7 @@ static void test_negative_arrival_enters_hold(void)
 
     expect_int("phase after negative arrival", T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
     expect_int("target while holding", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
-    expect_float10("reference while holding", -50, last_reference_cm);
+    expect_bool("reference still bounded while holding", true, last_reference_cm <= 5.0f);
 }
 
 static void test_stop_returns_idle_and_disables_balance(void)
@@ -167,9 +232,14 @@ static void test_stop_returns_idle_and_disables_balance(void)
 
 int main(void)
 {
+    failures = 0;
+
     test_start_targets_positive_5cm();
+    test_reference_ramps_toward_positive_target();
     test_positive_arrival_switches_to_negative_after_confirm_ticks();
+    test_positive_overshoot_switches_to_negative_after_confirm_ticks();
     test_invalid_vision_resets_arrival_confirmation();
+    test_negative_overshoot_enters_hold_after_confirm_ticks();
     test_negative_arrival_enters_hold();
     test_stop_returns_idle_and_disables_balance();
 

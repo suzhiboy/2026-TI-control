@@ -45,22 +45,64 @@
 #include <stdio.h>
 
 #ifndef APP_AUTO_START_T3
-#define APP_AUTO_START_T3  0
+#define APP_AUTO_START_T3  1
 #endif
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
+static bool g_pd42s1_pwm_running = false;
 static MT6701_Data mt6701;
 static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
-#define VISION_LOST_TIMEOUT_TICKS  50U
+static uint16_t slew_u16_toward(uint16_t current, uint16_t target, uint16_t step)
+{
+    if (current < target) {
+        uint16_t next = (uint16_t)(current + step);
+        return (next < target) ? next : target;
+    }
+
+    if (current > target) {
+        uint16_t next = (current > step) ? (uint16_t)(current - step) : 0U;
+        return (next > target) ? next : target;
+    }
+
+    return current;
+}
+
+static void PD42S1_WritePulse(uint16_t pulse)
+{
+    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, pulse, DL_TIMER_CC_1_INDEX);
+    if (!g_pd42s1_pwm_running) {
+        DL_Timer_startCounter(PD42S1_PWM_INST);
+        g_pd42s1_pwm_running = true;
+    }
+}
+
+static void PD42S1_LockCenter(void)
+{
+    bc.pwm_pulse = (uint16_t)(bc.pwm_neutral + 0.5f);
+    PD42S1_WritePulse(bc.pwm_pulse);
+}
+
+static void PD42S1_SoftLockCenter(void)
+{
+    uint16_t previous_pulse = bc.pwm_pulse;
+    uint16_t neutral_pulse = (uint16_t)(bc.pwm_neutral + 0.5f);
+
+    BalanceControl_Reset(&bc);
+    bc.pwm_pulse = previous_pulse;
+    bc.pwm_pulse = slew_u16_toward(bc.pwm_pulse, neutral_pulse,
+                                   BC_PWM_SLEW_LIMIT_US);
+    PD42S1_WritePulse(bc.pwm_pulse);
+}
 
 int main(void)
 {
     char oled_str[50];
     uint32_t last_vofa_tick = 0;
     uint32_t last_oled_tick = 0;
+    uint32_t last_task_run_tick = 0;
 
     SYSCFG_DL_init();
 
@@ -90,15 +132,12 @@ int main(void)
     KeyMenu_Init();
 
     ControlState_Set(CONTROL_IDLE);
-    DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, BC_PWM_CENTER_US,
-                                    DL_TIMER_CC_1_INDEX);
-    DL_Timer_startCounter(PD42S1_PWM_INST);
-    KeyMenu_StartTask(TASK_T2);
+    PD42S1_LockCenter();
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
 #if APP_AUTO_START_T3
-    T3Task_Start();
+    KeyMenu_StartTask(TASK_T3);
 #endif
 
     while (1) {
@@ -115,14 +154,15 @@ int main(void)
                 (float)g_vision_ball.x_mm / 10.0f);
         }
 
-        if (KeyMenu_GetState() == SYS_RUNNING) {
+        now = control_ticks_10ms;
+        if ((KeyMenu_GetState() == SYS_RUNNING) && (now != last_task_run_tick)) {
+            last_task_run_tick = now;
             const TaskDef *task = KeyMenu_GetCurrentTask();
             if (task && task->run) {
                 task->run();
             }
         }
 
-        now = control_ticks_10ms;
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
             Vofa_SendTelemetry();
@@ -133,14 +173,30 @@ int main(void)
 
             KeyMenu_OLED();
             if (T3Task_IsActive()) {
-                sprintf(oled_str, "T3:%d X:%d",
-                    (int)T3Task_GetTargetMM(), (int)g_vision_ball.x_mm);
+                int pwm_delta = (int)bc.pwm_pulse - (int)BC_PWM_CENTER_US;
+                if (g_vision_ball.valid) {
+                    sprintf(oled_str, "T%+d X%+d P%+d",
+                        (int)T3Task_GetTargetMM(),
+                        (int)g_vision_ball.x_mm,
+                        pwm_delta);
+                } else if (g_vision_ball.timed_out) {
+                    sprintf(oled_str, "T%+d TO P%+d",
+                        (int)T3Task_GetTargetMM(),
+                        pwm_delta);
+                } else {
+                    sprintf(oled_str, "T%+d L P%+d",
+                        (int)T3Task_GetTargetMM(),
+                        pwm_delta);
+                }
             } else if (g_vision_ball.valid) {
                 sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
                     (unsigned)g_vision_ball.conf_percent);
+            } else if (g_vision_ball.timed_out) {
+                sprintf(oled_str, "ball:TIMEOUT");
             } else {
                 mt6701_status = MT6701_Update(&mt6701);
-                sprintf(oled_str, "ball:LOST");
+                sprintf(oled_str, "LOST S%u",
+                    (unsigned)g_vision_ball.seq);
             }
             OLED_ShowLineString(4, 1, oled_str);
             OLED_Refresh();
@@ -152,7 +208,6 @@ void TIMER_0_INST_IRQHandler(void)
 {
     switch (DL_Timer_getPendingInterrupt(TIMER_0_INST)) {
         case DL_TIMER_IIDX_ZERO: {
-            static uint32_t lost_ticks = 0;
             bool need_balance = false;
 
             KeyMenu_Scan();
@@ -160,14 +215,12 @@ void TIMER_0_INST_IRQHandler(void)
             switch (g_control_state) {
                 case CONTROL_IDLE:
                     LineTrack_Stop();
-                    BalanceControl_Reset(&bc);
-                    bc.pwm_pulse = BC_PWM_CENTER_US;
+                    PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_TRACK_ONLY:
                     LineTrack_Loop_10ms();
-                    BalanceControl_Reset(&bc);
-                    bc.pwm_pulse = BC_PWM_CENTER_US;
+                    PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_STATIC_BALL:
@@ -179,25 +232,29 @@ void TIMER_0_INST_IRQHandler(void)
                     LineTrack_Loop_10ms();
                     need_balance = true;
                     break;
+
+                default:
+                    LineTrack_Stop();
+                    PD42S1_SoftLockCenter();
+                    break;
             }
 
             if (need_balance) {
                 if (g_vision_ball.valid) {
-                    lost_ticks = 0;
                     BalanceControl_Run(&bc);
-                } else {
-                    if (lost_ticks < VISION_LOST_TIMEOUT_TICKS) {
-                        lost_ticks++;
-                        BalanceControl_Run(&bc);
-                    } else {
-                        BalanceControl_Reset(&bc);
-                        bc.pwm_pulse = BC_PWM_CENTER_US;
+                    if (!g_pd42s1_pwm_running) {
+                        DL_Timer_startCounter(PD42S1_PWM_INST);
+                        g_pd42s1_pwm_running = true;
                     }
+                } else {
+                    PD42S1_SoftLockCenter();
                 }
             }
 
-            DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, bc.pwm_pulse,
-                                            DL_TIMER_CC_1_INDEX);
+            if (g_pd42s1_pwm_running) {
+                DL_Timer_setCaptureCompareValue(PD42S1_PWM_INST, bc.pwm_pulse,
+                                                DL_TIMER_CC_1_INDEX);
+            }
             control_ticks_10ms++;
             break;
         }

@@ -1,0 +1,157 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "balance_control.h"
+
+static int failures;
+
+static void expect_true(const char *name, int condition)
+{
+    if (!condition) {
+        fprintf(stderr, "FAIL %s\n", name);
+        failures++;
+    }
+}
+
+static uint16_t u16_abs_diff(uint16_t a, uint16_t b)
+{
+    return (a > b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
+}
+
+static void test_positive_position_drives_pwm_below_center(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, 0.0f);
+    BalanceControl_SetRawPosition(&bc, 5.0f);
+    BalanceControl_Run(&bc);
+
+    expect_true("positive x must command opposite hardware direction",
+                bc.pwm_pulse < BC_PWM_CENTER_US);
+    expect_true("positive x pwm remains inside soft limit",
+                bc.pwm_pulse >= (BC_PWM_CENTER_US - (uint16_t)BC_PWM_DELTA_LIMIT_US));
+}
+
+static void test_negative_position_drives_pwm_above_center(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, 0.0f);
+    BalanceControl_SetRawPosition(&bc, -5.0f);
+    BalanceControl_Run(&bc);
+
+    expect_true("negative x must command opposite hardware direction",
+                bc.pwm_pulse > BC_PWM_CENTER_US);
+    expect_true("negative x pwm remains inside soft limit",
+                bc.pwm_pulse <= (BC_PWM_CENTER_US + (uint16_t)BC_PWM_DELTA_LIMIT_US));
+}
+
+static void test_full_t3_reference_has_enough_pwm_authority(void)
+{
+    BalanceControl_t bc;
+    uint16_t prev_pwm;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, 5.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    prev_pwm = bc.pwm_pulse;
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+        expect_true("positive T3 pwm slew remains limited",
+                    u16_abs_diff(bc.pwm_pulse, prev_pwm) <= BC_PWM_SLEW_LIMIT_US);
+        prev_pwm = bc.pwm_pulse;
+    }
+
+    expect_true("positive T3 target should move more than 150us from center after slew",
+                bc.pwm_pulse >= (BC_PWM_CENTER_US + 150U));
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, -5.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    prev_pwm = bc.pwm_pulse;
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+        expect_true("negative T3 pwm slew remains limited",
+                    u16_abs_diff(bc.pwm_pulse, prev_pwm) <= BC_PWM_SLEW_LIMIT_US);
+        prev_pwm = bc.pwm_pulse;
+    }
+
+    expect_true("negative T3 target should move more than 150us from center after slew",
+                bc.pwm_pulse <= (BC_PWM_CENTER_US - 150U));
+}
+
+static void test_far_error_gets_minimum_drive(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetPositionPD(&bc, 0.01f, 0.0f);
+    BalanceControl_SetVelocityP(&bc, 0.0f);
+    BalanceControl_SetReference(&bc, 2.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    expect_true("far positive error should get minimum drive",
+                bc.pwm_pulse >= (BC_PWM_CENTER_US + BC_PWM_MIN_DRIVE_US));
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetPositionPD(&bc, 0.01f, 0.0f);
+    BalanceControl_SetVelocityP(&bc, 0.0f);
+    BalanceControl_SetReference(&bc, -2.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    expect_true("far negative error should get minimum drive",
+                bc.pwm_pulse <= (BC_PWM_CENTER_US - BC_PWM_MIN_DRIVE_US));
+}
+
+static void settle_position(BalanceControl_t *bc, float ref_cm, float raw_cm)
+{
+    BalanceControl_SetReference(bc, ref_cm);
+    for (int i = 0; i < 40; i++) {
+        BalanceControl_SetRawPosition(bc, raw_cm);
+        BalanceControl_Run(bc);
+    }
+}
+
+static void test_near_target_uses_soft_output(void)
+{
+    BalanceControl_t bc;
+    uint16_t delta;
+
+    BalanceControl_Init(&bc);
+    settle_position(&bc, 4.2f, 4.2f);
+    BalanceControl_SetReference(&bc, 5.0f);
+    BalanceControl_SetRawPosition(&bc, 4.2f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    delta = u16_abs_diff(bc.pwm_pulse, BC_PWM_CENTER_US);
+    expect_true("near target output should stay below minimum kick",
+                delta < BC_PWM_MIN_DRIVE_US);
+    expect_true("near target output should stay moderate",
+                delta <= 140U);
+}
+
+int main(void)
+{
+    test_positive_position_drives_pwm_below_center();
+    test_negative_position_drives_pwm_above_center();
+    test_full_t3_reference_has_enough_pwm_authority();
+    test_far_error_gets_minimum_drive();
+    test_near_target_uses_soft_output();
+
+    if (failures != 0) {
+        return EXIT_FAILURE;
+    }
+
+    printf("PASS balance control direction\n");
+    return EXIT_SUCCESS;
+}

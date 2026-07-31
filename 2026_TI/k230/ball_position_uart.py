@@ -43,6 +43,11 @@ except ImportError:
     UART = None
 
 try:
+    from machine import WDT
+except ImportError:
+    WDT = None
+
+try:
     from media.sensor import *
 except ImportError:
     pass
@@ -76,9 +81,9 @@ RGB888P_SIZE = [AI_FRAME_WIDTH, AI_FRAME_HEIGHT]
 # Competition mode: keep UART real-time, reduce IDE/display load.
 # Enable display/prints only while tuning the camera and rod endpoints.
 USE_ROI_REFINE = False
-DRAW_RESULT = True
+DRAW_RESULT = False
 SHOW_IMAGE = True
-DEBUG_FRAME_STATUS = True
+DEBUG_FRAME_STATUS = False
 PRINT_MEMORY = False
 STOP_AFTER_SECONDS = 0
 UART_FRAME_MODE = "compact_csv"  # compact_csv or legacy_ball
@@ -87,10 +92,13 @@ YOLO_DEBUG_MAX_BOXES = 3
 
 # Tune these points after camera placement is fixed.
 # Values below are YOLO box-center coordinates measured on the K230 terminal.
-CALIBRATION_MODE = "three_point"  # three_point or linear
+CALIBRATION_MODE = "linear"  # Endpoint-only projection along the rod line.
 ROD_LEFT_PX = (31, 219)
-ROD_CENTER_PX = (336, 199)
 ROD_RIGHT_PX = (745, 229)
+ROD_CENTER_PX = (
+    (ROD_LEFT_PX[0] + ROD_RIGHT_PX[0]) // 2,
+    (ROD_LEFT_PX[1] + ROD_RIGHT_PX[1]) // 2,
+)
 ROD_LEFT_MM = -120
 ROD_CENTER_MM = 0
 ROD_RIGHT_MM = 120
@@ -117,8 +125,8 @@ ROI_SCAN_STEP = 4
 BRIGHT_PERCENTILE_DIVISOR = 5
 BRIGHT_MIN_DELTA = 18
 MIN_BRIGHT_PIXELS = 6
-FILTER_ALPHA = 0.55
-MEDIAN_WINDOW = 3
+FILTER_ALPHA = 0.85
+MEDIAN_WINDOW = 1
 
 RESULT_SCORE_INDEX = "auto"  # auto, 1, or 2. Official docs commonly use boxes,scores,classes.
 BOX_FORMAT = "auto"  # auto, xywh, or xyxy.
@@ -132,20 +140,25 @@ ROD_MAX_PERP_PX = 55 # 0 disables rod-distance hard gate.
 ROD_ENDPOINT_MARGIN_PX = 10
 MERGE_IOU_THRESH = 0.30
 
-MAX_JUMP_MM = 35
-INIT_CONFIRM_FRAMES = 4
+MAX_JUMP_MM = 120
+INIT_CONFIRM_FRAMES = 1
 INIT_CONFIRM_SPREAD_MM = 15
-ALLOW_JUMP_RELOCK = False
-REINIT_AFTER_LOST_FRAMES = 45
-JUMP_CONFIRM_FRAMES = 8
+ALLOW_JUMP_RELOCK = True
+REINIT_AFTER_LOST_FRAMES = 5
+JUMP_CONFIRM_FRAMES = 2
 JUMP_CONFIRM_SPREAD_MM = 20
-LOST_FRAME_LIMIT = 3
+LOST_FRAME_LIMIT = 1
 SEND_EVERY_N_FRAMES = 1
 TERMINAL_PRINT_EVERY_N_FRAMES = 30
-LOST_SEND_EVERY_N_FRAMES = 5
+LOST_SEND_EVERY_N_FRAMES = 1
 MEMORY_PRINT_EVERY_N_FRAMES = 30
 GC_EVERY_N_FRAMES = 30
-MAIN_LOOP_SLEEP_MS = 2
+MAIN_LOOP_SLEEP_MS = 0
+ENABLE_WATCHDOG = True
+WATCHDOG_ID = 0
+WATCHDOG_FALLBACK_IDS = (1, 2)
+WATCHDOG_TIMEOUT_SECONDS = 5
+PIPELINE_HEARTBEAT_EVERY_N_FRAMES = 0
 
 
 def file_exists(path):
@@ -1422,6 +1435,66 @@ def safe_mem_free():
         return -1
 
 
+def setup_watchdog():
+    if not ENABLE_WATCHDOG or WDT is None:
+        print("K230_WDT disabled unavailable")
+        return None
+
+    watchdog_ids = (WATCHDOG_ID,) + WATCHDOG_FALLBACK_IDS
+    last_error = "unknown"
+    for watchdog_id in watchdog_ids:
+        try:
+            watchdog = WDT(watchdog_id, WATCHDOG_TIMEOUT_SECONDS)
+            print(
+                "K230_WDT enabled id={} timeout_s={}".format(
+                    watchdog_id,
+                    WATCHDOG_TIMEOUT_SECONDS,
+                )
+            )
+            return watchdog
+        except Exception as e:
+            last_error = e
+
+        try:
+            watchdog = WDT(watchdog_id, timeout=WATCHDOG_TIMEOUT_SECONDS)
+            print(
+                "K230_WDT enabled id={} timeout_s={}".format(
+                    watchdog_id,
+                    WATCHDOG_TIMEOUT_SECONDS,
+                )
+            )
+            return watchdog
+        except Exception as e:
+            last_error = e
+
+    print("K230_WDT disabled ids={} err={}".format(watchdog_ids, last_error))
+    return None
+
+
+def feed_watchdog(watchdog):
+    if watchdog is None:
+        return
+    try:
+        watchdog.feed()
+    except Exception as e:
+        print("K230_WDT feed_fail err={}".format(e))
+
+
+def print_pipeline_heartbeat(frame_id, stage, fps):
+    if PIPELINE_HEARTBEAT_EVERY_N_FRAMES <= 0:
+        return
+    if frame_id % PIPELINE_HEARTBEAT_EVERY_N_FRAMES != 0:
+        return
+    print(
+        "K230_HEARTBEAT frame={} stage={} fps={} heap={}".format(
+            frame_id,
+            stage,
+            round_int(fps),
+            safe_mem_free(),
+        )
+    )
+
+
 def print_frame_status(
     frame_id,
     fps,
@@ -1623,14 +1696,6 @@ def draw_anchor_results(osd_img, selected_box, cx, cy, x_mm, fps):
         osd_img.draw_line(
             ROD_LEFT_PX[0],
             ROD_LEFT_PX[1],
-            ROD_CENTER_PX[0],
-            ROD_CENTER_PX[1],
-            color=(255, 255, 0),
-            thickness=2,
-        )
-        osd_img.draw_line(
-            ROD_CENTER_PX[0],
-            ROD_CENTER_PX[1],
             ROD_RIGHT_PX[0],
             ROD_RIGHT_PX[1],
             color=(255, 255, 0),
@@ -1705,6 +1770,7 @@ def main():
     uart = None
     sensor = None
     osd_img = None
+    watchdog = None
     ai2d_input_tensor = None
     ai2d_output_tensor = None
     seq = 0
@@ -1770,6 +1836,7 @@ def main():
             osd_img = image.Image(DISPLAY_WIDTH, DISPLAY_HEIGHT, image.ARGB8888)
         MediaManager.init()
         sensor.run()
+        watchdog = setup_watchdog()
 
         clock = time.clock()
         frame_id = 0
@@ -1784,114 +1851,139 @@ def main():
                     print("K230_STOP_BY_TIMER seconds={}".format(STOP_AFTER_SECONDS))
                     break
 
-            clock.tick()
-            rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)
-
-            frame_id += 1
-            sent = 0
-            seen = False
-            refined = 0
-            x_mm = None
-            raw_x_mm = None
-            cx = None
-            cy = None
-            conf = 0.0
-            quality = 0
+            rgb888p_img = None
+            ai2d_input = None
+            ai2d_input_tensor = None
+            results = None
             det_boxes = None
-            reject_reason = "none"
-
+            stage = "start"
             try:
+                clock.tick()
+                rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)
+                frame_id += 1
+                stage = "snapshot"
+                print_pipeline_heartbeat(frame_id, stage, clock.fps())
+
+                sent = 0
+                seen = False
+                refined = 0
+                x_mm = None
+                raw_x_mm = None
+                cx = None
+                cy = None
+                conf = 0.0
+                quality = 0
+                reject_reason = "none"
+
                 if rgb888p_img.format() == image.RGBP888:
                     ai2d_input = rgb888p_img.to_numpy_ref()
                     ai2d_input_tensor = nn.from_numpy(ai2d_input)
                     ai2d_builder.run(ai2d_input_tensor, ai2d_output_tensor)
+                    stage = "ai2d"
+                    print_pipeline_heartbeat(frame_id, stage, clock.fps())
                     kpu.set_input_tensor(0, ai2d_output_tensor)
                     kpu.run()
+                    stage = "kpu"
+                    print_pipeline_heartbeat(frame_id, stage, clock.fps())
                     results = get_kpu_outputs(kpu)
                     det_boxes = post_process_anchor_outputs(
                         results,
                         deploy_conf,
                         frame_size,
                     )
-                    gc.collect()
-            finally:
-                rgb888p_img = None
+                    stage = "post"
+                    print_pipeline_heartbeat(frame_id, stage, clock.fps())
 
-            box, cx, cy, conf, raw_x_mm, quality = decode_aicube_det_boxes(
-                det_boxes,
-                tracker.last_raw_x_mm,
-            )
-            print_anchor_debug(frame_id, det_boxes)
+                box, cx, cy, conf, raw_x_mm, quality = decode_aicube_det_boxes(
+                    det_boxes,
+                    tracker.last_raw_x_mm,
+                )
+                print_anchor_debug(frame_id, det_boxes)
 
-            if box is not None:
-                accepted, x_mm = tracker.update(raw_x_mm)
-                reject_reason = tracker.last_reject_reason
-                if accepted:
-                    seen = True
-                    if frame_id % SEND_EVERY_N_FRAMES == 0:
-                        seq = (seq + 1) & 0xFFFF
-                        send_position(
-                            uart,
-                            seq,
-                            True,
-                            x_mm,
-                            raw_x_mm,
-                            cx,
-                            cy,
-                            conf,
-                            quality,
-                            clock.fps(),
-                        )
-                        sent = 1
+                if box is not None:
+                    accepted, x_mm = tracker.update(raw_x_mm)
+                    reject_reason = tracker.last_reject_reason
+                    if accepted:
+                        seen = True
+                        if frame_id % SEND_EVERY_N_FRAMES == 0:
+                            seq = (seq + 1) & 0xFFFF
+                            send_position(
+                                uart,
+                                seq,
+                                True,
+                                x_mm,
+                                raw_x_mm,
+                                cx,
+                                cy,
+                                conf,
+                                quality,
+                                clock.fps(),
+                            )
+                            sent = 1
+                    else:
+                        x_mm = None
                 else:
-                    x_mm = None
-            else:
-                tracker.update(None)
-                reject_reason = aicube_candidate_reject_reason(det_boxes)
+                    tracker.update(None)
+                    reject_reason = aicube_candidate_reject_reason(det_boxes)
 
-            if (
-                tracker.lost_frames >= LOST_FRAME_LIMIT
-                and frame_id % LOST_SEND_EVERY_N_FRAMES == 0
-            ):
-                seq = (seq + 1) & 0xFFFF
-                send_position(
-                    uart,
-                    seq,
-                    False,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0.0,
-                    0,
+                if (
+                    tracker.lost_frames >= LOST_FRAME_LIMIT
+                    and frame_id % LOST_SEND_EVERY_N_FRAMES == 0
+                ):
+                    seq = (seq + 1) & 0xFFFF
+                    send_position(
+                        uart,
+                        seq,
+                        False,
+                        None,
+                        None,
+                        None,
+                        None,
+                        0.0,
+                        0,
+                        clock.fps(),
+                    )
+                    sent = 1
+                stage = "uart"
+                print_pipeline_heartbeat(frame_id, stage, clock.fps())
+
+                draw_anchor_results(
+                    osd_img,
+                    box if seen else None,
+                    cx if seen else None,
+                    cy if seen else None,
+                    x_mm,
                     clock.fps(),
                 )
-                sent = 1
+                stage = "display"
+                print_pipeline_heartbeat(frame_id, stage, clock.fps())
 
-            draw_anchor_results(
-                osd_img,
-                box if seen else None,
-                cx if seen else None,
-                cy if seen else None,
-                x_mm,
-                clock.fps(),
-            )
-            print_frame_status(
-                frame_id,
-                clock.fps(),
-                seen,
-                cx,
-                cy,
-                raw_x_mm,
-                x_mm,
-                conf,
-                quality,
-                tracker.lost_frames,
-                sent,
-                refined,
-                reject_reason,
-            )
-            print_memory_status(frame_id)
+                print_frame_status(
+                    frame_id,
+                    clock.fps(),
+                    seen,
+                    cx,
+                    cy,
+                    raw_x_mm,
+                    x_mm,
+                    conf,
+                    quality,
+                    tracker.lost_frames,
+                    sent,
+                    refined,
+                    reject_reason,
+                )
+                print_memory_status(frame_id)
+                stage = "complete"
+                print_pipeline_heartbeat(frame_id, stage, clock.fps())
+            finally:
+                det_boxes = None
+                results = None
+                ai2d_input_tensor = None
+                ai2d_input = None
+                rgb888p_img = None
+
+            feed_watchdog(watchdog)
 
             if frame_id % GC_EVERY_N_FRAMES == 0:
                 gc.collect()

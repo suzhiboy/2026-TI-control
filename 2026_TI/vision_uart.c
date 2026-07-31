@@ -22,6 +22,7 @@ static volatile uint8_t vision_rx_len;
 static volatile bool vision_line_ready;
 static char vision_line[VISION_RX_BUF_SIZE];
 static VisionBallData latest_ball;
+static bool vision_frame_received;
 
 static bool parse_u16_field(const char *text, uint16_t *out)
 {
@@ -277,6 +278,7 @@ void VisionUart_Init(void)
     memset(&latest_ball, 0, sizeof(latest_ball));
     vision_rx_len = 0U;
     vision_line_ready = false;
+    vision_frame_received = false;
 
 #ifndef HOST_TEST
     NVIC_EnableIRQ(VISION_UART_INST_INT_IRQN);
@@ -304,14 +306,24 @@ void VisionUart_Poll(uint32_t now_tick_10ms)
         if (VisionProtocol_ParseLine(vision_line, &parsed, now_tick_10ms) ==
             VISION_PARSE_OK) {
             latest_ball = parsed;
+            vision_frame_received = true;
         }
     }
 
-    if (latest_ball.valid &&
-        ((uint32_t)(now_tick_10ms - latest_ball.last_update_tick) >
-         VISION_TIMEOUT_TICKS)) {
+    if (((!vision_frame_received) &&
+         (now_tick_10ms >= VISION_TIMEOUT_TICKS)) ||
+        (vision_frame_received &&
+         ((uint32_t)(now_tick_10ms - latest_ball.last_update_tick) >=
+          VISION_TIMEOUT_TICKS))) {
         latest_ball.valid = false;
         latest_ball.lost = true;
+        latest_ball.timed_out = true;
+        latest_ball.x_mm = 0;
+        latest_ball.raw_x_mm = 0;
+        latest_ball.cx = 0U;
+        latest_ball.cy = 0U;
+        latest_ball.quality = 0U;
+        latest_ball.conf_percent = 0U;
     }
 }
 

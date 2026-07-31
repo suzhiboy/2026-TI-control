@@ -9,6 +9,7 @@ typedef struct {
     bool vision_valid;
     int16_t x_mm;
     int16_t target_mm;
+    float reference_mm;
     uint8_t arrival_ticks;
     T3TaskPhase phase;
 } T3TaskState;
@@ -19,23 +20,45 @@ static T3TaskState t3 = {
     .vision_valid = false,
     .x_mm = 0,
     .target_mm = T3_POSITIVE_TARGET_MM,
+    .reference_mm = 0.0f,
     .arrival_ticks = 0U,
     .phase = T3_PHASE_IDLE,
 };
 
-static int16_t i16_abs_diff(int16_t a, int16_t b)
+static bool has_reached_target(void)
 {
-    int16_t diff = (int16_t)(a - b);
-    return (diff < 0) ? (int16_t)(-diff) : diff;
+    if (t3.target_mm >= 0) {
+        return t3.x_mm >= (int16_t)(t3.target_mm - T3_TARGET_TOLERANCE_MM);
+    }
+
+    return t3.x_mm <= (int16_t)(t3.target_mm + T3_TARGET_TOLERANCE_MM);
 }
 
 static void set_target_mm(int16_t target_mm)
 {
     t3.target_mm = target_mm;
     t3.arrival_ticks = 0U;
+}
 
+static void apply_reference_mm(float reference_mm)
+{
+    t3.reference_mm = reference_mm;
     if (t3.controller != 0) {
-        BalanceControl_SetReference(t3.controller, (float)target_mm / 10.0f);
+        BalanceControl_SetReference(t3.controller, t3.reference_mm / 10.0f);
+    }
+}
+
+static void ramp_reference_toward_target(void)
+{
+    float target = (float)t3.target_mm;
+    float diff = target - t3.reference_mm;
+
+    if (diff > T3_REF_RAMP_MM_PER_TICK) {
+        apply_reference_mm(t3.reference_mm + T3_REF_RAMP_MM_PER_TICK);
+    } else if (diff < -T3_REF_RAMP_MM_PER_TICK) {
+        apply_reference_mm(t3.reference_mm - T3_REF_RAMP_MM_PER_TICK);
+    } else {
+        apply_reference_mm(target);
     }
 }
 
@@ -63,6 +86,7 @@ void T3Task_Start(void)
         BalanceControl_Reset(t3.controller);
         BalanceControl_Enable(t3.controller, true);
     }
+    apply_reference_mm(0.0f);
     set_target_mm(T3_POSITIVE_TARGET_MM);
 }
 
@@ -80,7 +104,9 @@ void T3Task_Run(void)
         return;
     }
 
-    if (i16_abs_diff(t3.x_mm, t3.target_mm) <= T3_TARGET_TOLERANCE_MM) {
+    ramp_reference_toward_target();
+
+    if (has_reached_target()) {
         if (t3.arrival_ticks < T3_ARRIVAL_CONFIRM_TICKS) {
             t3.arrival_ticks++;
         }

@@ -23,6 +23,11 @@ static bool motor_test_mode = false;
 static int16_t motor_test_left_pwm = 0;
 static int16_t motor_test_right_pwm = 0;
 
+#define LINE_OPEN_LOOP_PWM_MODE      1
+#define LINE_OPEN_LOOP_BASE_PWM      900.0f
+#define LINE_OPEN_LOOP_TURN_GAIN     45.0f
+#define LINE_OPEN_LOOP_PWM_MIN       250.0f
+
 static float clamp_target_speed(float speed)
 {
     if (speed < 0.0f) {
@@ -177,6 +182,55 @@ void LineTrack_Loop_10ms(void)
         Set_Motor_Speed_Right(motor_test_right_pwm);
         return;
     }
+
+#if LINE_OPEN_LOOP_PWM_MODE
+    if (line_track_running) {
+        float left_pwm;
+        float right_pwm;
+
+        line_error = Sensor_Get_Error();
+        line_turn_out = PID_Calc_Positional(&pid_line, line_error);
+
+        if (line_braking) {
+            line_brake_timer++;
+            if (line_brake_timer <= 5) {
+                Set_Motor_Speed_Left(0);
+                Set_Motor_Speed_Right(0);
+                return;
+            }
+            line_braking = false;
+            line_track_running = false;
+            line_speed_setpoint = 0.0f;
+            Set_Motor_Speed_Left(0);
+            Set_Motor_Speed_Right(0);
+            return;
+        }
+
+        left_pwm = LINE_OPEN_LOOP_BASE_PWM + line_turn_out * LINE_OPEN_LOOP_TURN_GAIN;
+        right_pwm = LINE_OPEN_LOOP_BASE_PWM - line_turn_out * LINE_OPEN_LOOP_TURN_GAIN;
+
+        if (left_pwm < LINE_OPEN_LOOP_PWM_MIN) {
+            left_pwm = LINE_OPEN_LOOP_PWM_MIN;
+        }
+        if (right_pwm < LINE_OPEN_LOOP_PWM_MIN) {
+            right_pwm = LINE_OPEN_LOOP_PWM_MIN;
+        }
+        if (left_pwm > (float)MOTOR_PWM_MAX) {
+            left_pwm = (float)MOTOR_PWM_MAX;
+        }
+        if (right_pwm > (float)MOTOR_PWM_MAX) {
+            right_pwm = (float)MOTOR_PWM_MAX;
+        }
+
+        line_left_pwm = left_pwm;
+        line_right_pwm = right_pwm;
+        pid_speed_L.target = 0.0f;
+        pid_speed_R.target = 0.0f;
+        Set_Motor_Speed_Left((int16_t)left_pwm);
+        Set_Motor_Speed_Right((int16_t)right_pwm);
+        return;
+    }
+#endif
 
     if (line_track_running) {
         /* ---- 加速斜坡: 逐渐加速到目标速度 ---- */
