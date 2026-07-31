@@ -76,12 +76,12 @@
 #endif
 
 /*
- * 4 键菜单系统 按键引脚定义
+ * Six direct task keys.
  *
- * K1 (PB12): 上一个任务  — 独立 GPIO
- * K2 (PB13): 下一个任务  — 与循迹 AD2 分时复用, RUNNING 时不响应
- * K3 (PB2):  调目标点    — 原 IMU601 TX
- * K4 (PB3):  确认/启动   — 原 IMU601 RX
+ * K1..K6 map to TASK_T1..TASK_T6 in key_menu.c.
+ * Pin map: K1=PB14, K2=PB11, K3=PB10, K4=PB1, K5=PB0, K6=PA30.
+ * All six pins are listed in empty.syscfg under GPIO_KEY.
+ * Buttons are active-low with pull-up input.
  */
 
 #ifndef KEY_K1_PORT
@@ -89,7 +89,11 @@
 #endif
 
 #ifndef KEY_K1_PIN
-#define KEY_K1_PIN      DL_GPIO_PIN_12
+#define KEY_K1_PIN      DL_GPIO_PIN_14
+#endif
+
+#ifndef KEY_K1_IOMUX
+#define KEY_K1_IOMUX    GPIO_KEY_K1_IOMUX
 #endif
 
 #ifndef KEY_K2_PORT
@@ -97,7 +101,11 @@
 #endif
 
 #ifndef KEY_K2_PIN
-#define KEY_K2_PIN      DL_GPIO_PIN_13
+#define KEY_K2_PIN      DL_GPIO_PIN_11
+#endif
+
+#ifndef KEY_K2_IOMUX
+#define KEY_K2_IOMUX    GPIO_KEY_K2_IOMUX
 #endif
 
 #ifndef KEY_K3_PORT
@@ -105,7 +113,11 @@
 #endif
 
 #ifndef KEY_K3_PIN
-#define KEY_K3_PIN      DL_GPIO_PIN_2
+#define KEY_K3_PIN      DL_GPIO_PIN_10
+#endif
+
+#ifndef KEY_K3_IOMUX
+#define KEY_K3_IOMUX    GPIO_KEY_K3_IOMUX
 #endif
 
 #ifndef KEY_K4_PORT
@@ -113,7 +125,35 @@
 #endif
 
 #ifndef KEY_K4_PIN
-#define KEY_K4_PIN      DL_GPIO_PIN_3
+#define KEY_K4_PIN      DL_GPIO_PIN_1
+#endif
+
+#ifndef KEY_K4_IOMUX
+#define KEY_K4_IOMUX    GPIO_KEY_K4_IOMUX
+#endif
+
+#ifndef KEY_K5_PORT
+#define KEY_K5_PORT     GPIOB
+#endif
+
+#ifndef KEY_K5_PIN
+#define KEY_K5_PIN      DL_GPIO_PIN_0
+#endif
+
+#ifndef KEY_K5_IOMUX
+#define KEY_K5_IOMUX    GPIO_KEY_K5_IOMUX
+#endif
+
+#ifndef KEY_K6_PORT
+#define KEY_K6_PORT     GPIOA
+#endif
+
+#ifndef KEY_K6_PIN
+#define KEY_K6_PIN      DL_GPIO_PIN_30
+#endif
+
+#ifndef KEY_K6_IOMUX
+#define KEY_K6_IOMUX    GPIO_KEY_K6_IOMUX
 #endif
 
 #endif /* BOARD_CONFIG_H */

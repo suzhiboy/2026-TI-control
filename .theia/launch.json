@@ -55,6 +55,12 @@
                     ]
                 }
             ]
+        },
+        {
+            "name": "CCS Attach",
+            "type": "ccs-debug",
+            "request": "launch",
+            "targetConfig": "E:\\DIANSAI resources\\26DIANSAI\\DIANSAI_26\\2026_TI\\targetConfigs\\MSPM0G3507.ccxml"
         }
     ]
 }

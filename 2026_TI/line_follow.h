@@ -19,6 +19,11 @@ void LineTrack_SetParams(const PidTuningParams *params);
 void LineTrack_GetParams(PidTuningParams *params);
 void LineTrack_ClearPidState(void);
 void LineTrack_SetBaseSpeed(float speed);
+void LineTrack_SetMotionProfile(float accel_step_cm_s,
+                                float decel_step_cm_s,
+                                float brake_step_cm_s);
+void LineTrack_ResetMotionProfile(void);
+void LineTrack_SetTurnDirectionSign(float sign);
 void LineTrack_SetMotorTest(int16_t left_pwm, int16_t right_pwm);
 void LineTrack_ExitMotorTest(void);
 bool LineTrack_IsRunning(void);
@@ -31,5 +36,6 @@ float LineTrack_Get_LeftTarget(void);
 float LineTrack_Get_RightTarget(void);
 float LineTrack_Get_LeftPwm(void);
 float LineTrack_Get_RightPwm(void);
+float LineTrack_GetLongitudinalAccelMS2(void);
 
 #endif

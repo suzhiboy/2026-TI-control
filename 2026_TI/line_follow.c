@@ -17,16 +17,28 @@ static float filtered_L = 0.0f;
 static float filtered_R = 0.0f;
 static float line_left_pwm = 0.0f;
 static float line_right_pwm = 0.0f;
+static float line_longitudinal_accel_ms2 = 0.0f;
 static bool line_braking = false;
 static uint8_t line_brake_timer = 0;
 static bool motor_test_mode = false;
 static int16_t motor_test_left_pwm = 0;
 static int16_t motor_test_right_pwm = 0;
+static float line_turn_direction_scale = 1.0f;
 
-#define LINE_OPEN_LOOP_PWM_MODE      1
+#define LINE_OPEN_LOOP_PWM_MODE      0
 #define LINE_OPEN_LOOP_BASE_PWM      900.0f
 #define LINE_OPEN_LOOP_TURN_GAIN     45.0f
 #define LINE_OPEN_LOOP_PWM_MIN       250.0f
+#define LINE_TURN_DIRECTION_SIGN    (1.0f)
+#define LINE_TURN_OUTPUT_LIMIT       10.0f
+#define LINE_TURN_INTEGRAL_LIMIT      8.0f
+#define LINE_DEFAULT_ACCEL_STEP_CM_S (0.8f)
+#define LINE_DEFAULT_DECEL_STEP_CM_S (0.35f)
+#define LINE_DEFAULT_BRAKE_STEP_CM_S (6.0f)
+
+static float line_accel_step_cm_s = LINE_DEFAULT_ACCEL_STEP_CM_S;
+static float line_decel_step_cm_s = LINE_DEFAULT_DECEL_STEP_CM_S;
+static float line_brake_step_cm_s = LINE_DEFAULT_BRAKE_STEP_CM_S;
 
 static float clamp_target_speed(float speed)
 {
@@ -51,7 +63,8 @@ void LineTrack_Init(void)
     Encoder_Init();
 
     PidParams_SetDefaults(&defaults);
-    PID_Init(&pid_line, defaults.line.kp, defaults.line.ki, defaults.line.kd, 10.0f, -10.0f, 8.0f);
+    PID_Init(&pid_line, defaults.line.kp, defaults.line.ki, defaults.line.kd,
+        LINE_TURN_OUTPUT_LIMIT, -LINE_TURN_OUTPUT_LIMIT, LINE_TURN_INTEGRAL_LIMIT);
     PID_Init(&pid_speed_L, defaults.speed_left.kp, defaults.speed_left.ki, defaults.speed_left.kd,
         LINE_SPEED_PID_OUTPUT_MAX, 0.0f, LINE_SPEED_PID_INTEGRAL_MAX);
     PID_Init(&pid_speed_R, defaults.speed_right.kp, defaults.speed_right.ki, defaults.speed_right.kd,
@@ -78,6 +91,8 @@ void LineTrack_Stop(void)
     line_track_running = false;
     pid_speed_L.target = 0.0f;
     pid_speed_R.target = 0.0f;
+    line_speed_setpoint = 0.0f;
+    line_longitudinal_accel_ms2 = 0.0f;
     Set_Motor_Speed_Left(0);
     Set_Motor_Speed_Right(0);
 }
@@ -94,6 +109,7 @@ void LineTrack_Reset(void)
     line_turn_out = 0.0f;
     line_left_pwm = 0.0f;
     line_right_pwm = 0.0f;
+    line_longitudinal_accel_ms2 = 0.0f;
 }
 
 void LineTrack_SetBaseSpeed(float speed)
@@ -101,6 +117,43 @@ void LineTrack_SetBaseSpeed(float speed)
     if (speed >= 0.0f && speed <= 200.0f) {
         line_base_speed = speed;
     }
+}
+
+static bool valid_motion_step(float step)
+{
+    return (step > 0.0f) && (step <= 20.0f);
+}
+
+static void update_longitudinal_accel(float previous_speed_setpoint)
+{
+    line_longitudinal_accel_ms2 = line_speed_setpoint - previous_speed_setpoint;
+}
+
+void LineTrack_SetMotionProfile(float accel_step_cm_s,
+                                float decel_step_cm_s,
+                                float brake_step_cm_s)
+{
+    if (valid_motion_step(accel_step_cm_s)) {
+        line_accel_step_cm_s = accel_step_cm_s;
+    }
+    if (valid_motion_step(decel_step_cm_s)) {
+        line_decel_step_cm_s = decel_step_cm_s;
+    }
+    if (valid_motion_step(brake_step_cm_s)) {
+        line_brake_step_cm_s = brake_step_cm_s;
+    }
+}
+
+void LineTrack_ResetMotionProfile(void)
+{
+    line_accel_step_cm_s = LINE_DEFAULT_ACCEL_STEP_CM_S;
+    line_decel_step_cm_s = LINE_DEFAULT_DECEL_STEP_CM_S;
+    line_brake_step_cm_s = LINE_DEFAULT_BRAKE_STEP_CM_S;
+}
+
+void LineTrack_SetTurnDirectionSign(float sign)
+{
+    line_turn_direction_scale = (sign >= 0.0f) ? 1.0f : -1.0f;
 }
 
 void LineTrack_Brake(void)
@@ -170,12 +223,15 @@ void LineTrack_ExitMotorTest(void)
 
 void LineTrack_Loop_10ms(void)
 {
+    float previous_speed_setpoint = line_speed_setpoint;
+
     Encoder_UpdateData_10ms();
 
     filtered_L = filtered_L * 0.7f + (float)g_Encoder.speed_left * 0.3f;
     filtered_R = filtered_R * 0.7f + (float)g_Encoder.speed_right * 0.3f;
 
     if (motor_test_mode) {
+        line_longitudinal_accel_ms2 = 0.0f;
         line_left_pwm = (float)motor_test_left_pwm;
         line_right_pwm = (float)motor_test_right_pwm;
         Set_Motor_Speed_Left(motor_test_left_pwm);
@@ -189,7 +245,8 @@ void LineTrack_Loop_10ms(void)
         float right_pwm;
 
         line_error = Sensor_Get_Error();
-        line_turn_out = PID_Calc_Positional(&pid_line, line_error);
+        line_turn_out = LINE_TURN_DIRECTION_SIGN * PID_Calc_Positional(&pid_line, line_error);
+        line_turn_out *= line_turn_direction_scale;
 
         if (line_braking) {
             line_brake_timer++;
@@ -233,11 +290,16 @@ void LineTrack_Loop_10ms(void)
 #endif
 
     if (line_track_running) {
-        /* ---- 加速斜坡: 逐渐加速到目标速度 ---- */
+        /* ---- 速度斜坡: 逐渐跟随目标速度 ---- */
         if (!line_braking) {
             if (line_speed_setpoint < line_base_speed) {
-                line_speed_setpoint += 0.8f;                    /* 每 10ms 加 0.8 → ~150ms 到 12.0 */
+                line_speed_setpoint += line_accel_step_cm_s;
                 if (line_speed_setpoint > line_base_speed) {
+                    line_speed_setpoint = line_base_speed;
+                }
+            } else if (line_speed_setpoint > line_base_speed) {
+                line_speed_setpoint -= line_decel_step_cm_s;
+                if (line_speed_setpoint < line_base_speed) {
                     line_speed_setpoint = line_base_speed;
                 }
             }
@@ -246,29 +308,29 @@ void LineTrack_Loop_10ms(void)
         /* ---- 刹车流程 ---- */
         if (line_braking) {
             line_brake_timer++;
-            if (line_brake_timer <= 5) {
-                /* Phase 1: 快速减速到 0 (5 ticks = 50ms) */
-                line_speed_setpoint *= 0.6f;
-                if (line_speed_setpoint < 0.5f) line_speed_setpoint = 0.0f;
-            } else if (line_brake_timer <= 8) {
-                /* Phase 2: 主动反转刹车 (3 ticks = 30ms) */
-                Set_Motor_Speed_Left(0);
-                Set_Motor_Speed_Right(0);
-                line_speed_setpoint = 0.0f;
-                return;     /* 跳过后面的 PID 计算 */
+            if (line_speed_setpoint > line_brake_step_cm_s) {
+                line_speed_setpoint -= line_brake_step_cm_s;
             } else {
-                /* Phase 3: 完全停止 */
+                line_speed_setpoint = 0.0f;
+            }
+
+            if ((line_speed_setpoint <= 0.0f) && (line_brake_timer >= 3U)) {
+                update_longitudinal_accel(previous_speed_setpoint);
                 Set_Motor_Speed_Left(0);
                 Set_Motor_Speed_Right(0);
+                pid_speed_L.target = 0.0f;
+                pid_speed_R.target = 0.0f;
+                line_left_pwm = 0.0f;
+                line_right_pwm = 0.0f;
                 line_braking = false;
                 line_track_running = false;
-                line_speed_setpoint = 0.0f;
                 return;
             }
         }
 
         line_error = Sensor_Get_Error();
-        line_turn_out = PID_Calc_Positional(&pid_line, line_error);
+        line_turn_out = LINE_TURN_DIRECTION_SIGN * PID_Calc_Positional(&pid_line, line_error);
+        line_turn_out *= line_turn_direction_scale;
 
         pid_speed_L.target = clamp_target_speed(line_speed_setpoint + line_turn_out);
         pid_speed_R.target = clamp_target_speed(line_speed_setpoint - line_turn_out);
@@ -277,6 +339,8 @@ void LineTrack_Loop_10ms(void)
         pid_speed_L.target = 0.0f;
         pid_speed_R.target = 0.0f;
     }
+
+    update_longitudinal_accel(previous_speed_setpoint);
 
     int16_t final_L_pwm = (int16_t)PID_Calc_Positional(&pid_speed_L, filtered_L);
     int16_t final_R_pwm = (int16_t)PID_Calc_Positional(&pid_speed_R, filtered_R);
@@ -335,4 +399,9 @@ float LineTrack_Get_LeftPwm(void)
 float LineTrack_Get_RightPwm(void)
 {
     return line_right_pwm;
+}
+
+float LineTrack_GetLongitudinalAccelMS2(void)
+{
+    return line_longitudinal_accel_ms2;
 }

@@ -3,6 +3,9 @@
 
 #define LINE_DETECTED             1U
 #define LINE_UNDETECTED           0U
+#define SENSOR_CENTER_LEFT_IDX    3U
+#define SENSOR_CENTER_RIGHT_IDX   4U
+#define SENSOR_CENTER_DEADBAND_ERROR 5.0f
 
 void Sensor_Read_All(uint8_t results[SENSOR_COUNT])
 {
@@ -42,6 +45,12 @@ float Sensor_Get_Error(void)
 
     Sensor_Read_All(data);
 
+    if ((data[SENSOR_CENTER_LEFT_IDX] == LINE_DETECTED) &&
+        (data[SENSOR_CENTER_RIGHT_IDX] == LINE_DETECTED)) {
+        last_valid_error = 0.0f;
+        return last_valid_error;
+    }
+
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
         if (data[i] == LINE_DETECTED) {
             weighted_sum += weights[i];
@@ -50,7 +59,13 @@ float Sensor_Get_Error(void)
     }
 
     if (active_count > 0) {
-        last_valid_error = (float)weighted_sum / (float)active_count;
+        float current_error = (float)weighted_sum / (float)active_count;
+
+        if ((current_error <= SENSOR_CENTER_DEADBAND_ERROR) &&
+            (current_error >= -SENSOR_CENTER_DEADBAND_ERROR)) {
+            current_error = 0.0f;
+        }
+        last_valid_error = current_error;
         return last_valid_error;
     }
 

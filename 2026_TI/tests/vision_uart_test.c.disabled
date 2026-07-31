@@ -97,22 +97,44 @@ static void test_reject_bad_lines(void)
 static void test_rx_line_buffer_and_timeout(void)
 {
     VisionBallData data;
+    VisionUartStats stats;
 
     VisionUart_Init();
     VisionUart_TestFeedString("BALL,9,42,0.75,21\n");
     VisionUart_Poll(10U);
     data = VisionUart_GetLatest();
+    stats = VisionUart_GetStats();
 
     expect_bool("rx valid", true, data.valid);
     expect_int("rx seq", 9, data.seq);
     expect_int("rx x", 42, data.x_mm);
     expect_int("rx conf", 75, data.conf_percent);
     expect_int("rx fps", 21, data.fps);
+    expect_int("stats rx bytes after valid line", 18, (int)stats.rx_bytes);
+    expect_int("stats rx lines after valid line", 1, (int)stats.rx_lines);
+    expect_int("stats parse ok after valid line", 1, (int)stats.parse_ok);
 
     VisionUart_Poll(31U);
     data = VisionUart_GetLatest();
     expect_bool("timeout valid false", false, data.valid);
     expect_bool("timeout lost true", true, data.lost);
+}
+
+static void test_stats_count_bad_lines(void)
+{
+    VisionUartStats stats;
+
+    VisionUart_Init();
+    VisionUart_TestFeedString("HELLO,1,2,3\n");
+    VisionUart_Poll(1U);
+    VisionUart_TestFeedString("B,1,1,999,0,0,0,0,0\n");
+    VisionUart_Poll(2U);
+
+    stats = VisionUart_GetStats();
+    expect_int("stats rx lines after bad lines", 2, (int)stats.rx_lines);
+    expect_int("stats parse unknown", 1, (int)stats.parse_unknown);
+    expect_int("stats parse bad value", 1, (int)stats.parse_bad_value);
+    expect_int("stats parse ok remains zero", 0, (int)stats.parse_ok);
 }
 
 int main(void)
@@ -122,6 +144,7 @@ int main(void)
     test_parse_compact_ball_line();
     test_reject_bad_lines();
     test_rx_line_buffer_and_timeout();
+    test_stats_count_bad_lines();
 
     if (failures != 0) {
         return EXIT_FAILURE;

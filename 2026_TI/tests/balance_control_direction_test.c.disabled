@@ -18,6 +18,11 @@ static uint16_t u16_abs_diff(uint16_t a, uint16_t b)
     return (a > b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
 }
 
+static uint16_t u16_min(uint16_t a, uint16_t b)
+{
+    return (a < b) ? a : b;
+}
+
 static void test_positive_position_drives_pwm_below_center(void)
 {
     BalanceControl_t bc;
@@ -27,10 +32,11 @@ static void test_positive_position_drives_pwm_below_center(void)
     BalanceControl_SetRawPosition(&bc, 5.0f);
     BalanceControl_Run(&bc);
 
-    expect_true("positive x must command opposite hardware direction",
-                bc.pwm_pulse < BC_PWM_CENTER_US);
+    expect_true("positive x must command corrected hardware direction",
+                bc.pwm_pulse > BC_PWM_CENTER_US);
     expect_true("positive x pwm remains inside soft limit",
-                bc.pwm_pulse >= (BC_PWM_CENTER_US - (uint16_t)BC_PWM_DELTA_LIMIT_US));
+                bc.pwm_pulse <= (BC_PWM_CENTER_US +
+                                 (uint16_t)BC_PWM_POSITIVE_DELTA_LIMIT_US));
 }
 
 static void test_negative_position_drives_pwm_above_center(void)
@@ -42,10 +48,11 @@ static void test_negative_position_drives_pwm_above_center(void)
     BalanceControl_SetRawPosition(&bc, -5.0f);
     BalanceControl_Run(&bc);
 
-    expect_true("negative x must command opposite hardware direction",
-                bc.pwm_pulse > BC_PWM_CENTER_US);
+    expect_true("negative x must command corrected hardware direction",
+                bc.pwm_pulse < BC_PWM_CENTER_US);
     expect_true("negative x pwm remains inside soft limit",
-                bc.pwm_pulse <= (BC_PWM_CENTER_US + (uint16_t)BC_PWM_DELTA_LIMIT_US));
+                bc.pwm_pulse >= (BC_PWM_CENTER_US -
+                                 (uint16_t)BC_PWM_NEGATIVE_DELTA_LIMIT_US));
 }
 
 static void test_full_t3_reference_has_enough_pwm_authority(void)
@@ -57,21 +64,21 @@ static void test_full_t3_reference_has_enough_pwm_authority(void)
     BalanceControl_SetReference(&bc, 5.0f);
     BalanceControl_SetRawPosition(&bc, 0.0f);
     prev_pwm = bc.pwm_pulse;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         BalanceControl_Run(&bc);
         expect_true("positive T3 pwm slew remains limited",
                     u16_abs_diff(bc.pwm_pulse, prev_pwm) <= BC_PWM_SLEW_LIMIT_US);
         prev_pwm = bc.pwm_pulse;
     }
 
-    expect_true("positive T3 target should move more than 150us from center after slew",
-                bc.pwm_pulse >= (BC_PWM_CENTER_US + 150U));
+    expect_true("positive T3 target should retain useful forward authority",
+                bc.pwm_pulse <= (BC_PWM_CENTER_US - 100U));
 
     BalanceControl_Init(&bc);
     BalanceControl_SetReference(&bc, -5.0f);
     BalanceControl_SetRawPosition(&bc, 0.0f);
     prev_pwm = bc.pwm_pulse;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         BalanceControl_Run(&bc);
         expect_true("negative T3 pwm slew remains limited",
                     u16_abs_diff(bc.pwm_pulse, prev_pwm) <= BC_PWM_SLEW_LIMIT_US);
@@ -79,7 +86,7 @@ static void test_full_t3_reference_has_enough_pwm_authority(void)
     }
 
     expect_true("negative T3 target should move more than 150us from center after slew",
-                bc.pwm_pulse <= (BC_PWM_CENTER_US - 150U));
+                bc.pwm_pulse >= (BC_PWM_CENTER_US + 150U));
 }
 
 static void test_far_error_gets_minimum_drive(void)
@@ -96,7 +103,10 @@ static void test_far_error_gets_minimum_drive(void)
     }
 
     expect_true("far positive error should get minimum drive",
-                bc.pwm_pulse >= (BC_PWM_CENTER_US + BC_PWM_MIN_DRIVE_US));
+                bc.pwm_pulse <=
+                (BC_PWM_CENTER_US -
+                 u16_min(BC_PWM_MIN_DRIVE_US,
+                         BC_PWM_NEGATIVE_DELTA_LIMIT_US)));
 
     BalanceControl_Init(&bc);
     BalanceControl_SetPositionPD(&bc, 0.01f, 0.0f);
@@ -108,7 +118,32 @@ static void test_far_error_gets_minimum_drive(void)
     }
 
     expect_true("far negative error should get minimum drive",
-                bc.pwm_pulse <= (BC_PWM_CENTER_US - BC_PWM_MIN_DRIVE_US));
+                bc.pwm_pulse >= (BC_PWM_CENTER_US + BC_PWM_MIN_DRIVE_US));
+}
+
+static uint16_t run_to_delta(float ref_cm, float raw_cm, int ticks)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, ref_cm);
+    BalanceControl_SetRawPosition(&bc, raw_cm);
+    for (int i = 0; i < ticks; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    return u16_abs_diff(bc.pwm_pulse, BC_PWM_CENTER_US);
+}
+
+static void test_larger_error_commands_larger_tilt(void)
+{
+    uint16_t small_error_delta = run_to_delta(2.0f, 0.0f, 80);
+    uint16_t large_error_delta = run_to_delta(8.0f, 0.0f, 80);
+
+    expect_true("large position error should not command less tilt",
+                large_error_delta >= small_error_delta);
+    expect_true("large position error should respect gentle acceleration",
+                large_error_delta <= BC_PWM_NEGATIVE_DELTA_LIMIT_US);
 }
 
 static void settle_position(BalanceControl_t *bc, float ref_cm, float raw_cm)
@@ -140,13 +175,205 @@ static void test_near_target_uses_soft_output(void)
                 delta <= 140U);
 }
 
+static void test_reverse_braking_slew_is_faster_than_normal_slew(void)
+{
+    BalanceControl_t bc;
+    uint16_t prev_pwm;
+    uint16_t reverse_step;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, 5.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 40; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    expect_true("setup should drive PWM below center before reversal",
+                bc.pwm_pulse < (BC_PWM_CENTER_US - 100U));
+
+    prev_pwm = bc.pwm_pulse;
+    BalanceControl_SetReference(&bc, -5.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    BalanceControl_Run(&bc);
+
+    reverse_step = bc.pwm_pulse - prev_pwm;
+    expect_true("reverse braking should move faster than normal slew",
+                reverse_step > BC_PWM_SLEW_LIMIT_US);
+    expect_true("gentle return version should exceed the old reverse slew",
+                reverse_step > 60U);
+    expect_true("reverse braking should remain bounded",
+                reverse_step <= 80U);
+}
+
+static void test_velocity_updates_only_from_new_timed_samples(void)
+{
+    BalanceControl_t bc;
+    float velocity_after_sample;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetRawPositionTimed(&bc, 0.0f, 0.02f);
+    BalanceControl_Run(&bc);
+    BalanceControl_SetRawPositionTimed(&bc, 1.0f, 0.02f);
+    BalanceControl_Run(&bc);
+    velocity_after_sample = bc.x_vel;
+
+    BalanceControl_Run(&bc);
+
+    expect_true("timed sample should produce positive velocity",
+                velocity_after_sample > 0.0f);
+    expect_true("missing sample must not force velocity toward zero",
+                bc.x_vel == velocity_after_sample);
+}
+
+static void test_reset_reinitializes_velocity_sampling(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetRawPositionTimed(&bc, 0.0f, 0.02f);
+    BalanceControl_Run(&bc);
+    BalanceControl_SetRawPositionTimed(&bc, 1.0f, 0.02f);
+    BalanceControl_Run(&bc);
+    expect_true("setup should estimate motion", bc.x_vel > 0.0f);
+
+    BalanceControl_Reset(&bc);
+    BalanceControl_SetRawPositionTimed(&bc, 2.0f, 0.02f);
+    BalanceControl_Run(&bc);
+
+    expect_true("first sample after reset must not create false velocity",
+                bc.x_vel == 0.0f);
+}
+
+static void test_velocity_lookahead_brakes_before_target(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, 5.0f);
+    bc.has_position_sample = true;
+    bc.lpf_pos_state = 2.0f;
+    bc.x_prev = 2.0f;
+    bc.x_vel = 10.0f;
+    bc.lpf_vel_state = 10.0f;
+
+    BalanceControl_Run(&bc);
+
+    expect_true("positive motion should brake before reaching +5 cm",
+                bc.a_base < 0.0f);
+}
+
+static void test_reverse_direction_has_more_tilt_authority(void)
+{
+    uint16_t acceleration_delta = run_to_delta(5.0f, 0.0f, 80);
+    uint16_t reverse_delta = run_to_delta(-5.0f, 0.0f, 80);
+
+    expect_true("initial acceleration must remain mechanically useful",
+                acceleration_delta >=
+                u16_min(BC_PWM_MIN_DRIVE_US,
+                        BC_PWM_NEGATIVE_DELTA_LIMIT_US));
+    expect_true("negative PWM acceleration must stay gentle",
+                acceleration_delta <= BC_PWM_NEGATIVE_DELTA_LIMIT_US);
+    expect_true("positive PWM reverse drive must stay bounded",
+                reverse_delta <= BC_PWM_POSITIVE_DELTA_LIMIT_US);
+    expect_true("reverse direction must have more authority",
+                reverse_delta > acceleration_delta);
+}
+
+static void test_zero_controller_output_uses_correct_drive_direction(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetPositionPD(&bc, 0.0f, 0.0f);
+    BalanceControl_SetVelocityP(&bc, 0.0f);
+    BalanceControl_SetReference(&bc, 2.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+    expect_true("positive target fallback must command negative PWM",
+                bc.pwm_pulse < BC_PWM_CENTER_US);
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetPositionPD(&bc, 0.0f, 0.0f);
+    BalanceControl_SetVelocityP(&bc, 0.0f);
+    BalanceControl_SetReference(&bc, -2.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+    expect_true("negative target fallback must command positive PWM",
+                bc.pwm_pulse > BC_PWM_CENTER_US);
+}
+
+static void test_settle_profile_limits_output_and_disables_minimum_kick(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetOutputProfile(&bc, 140U, 160U, 0U);
+    BalanceControl_SetPositionPD(&bc, 0.0f, 0.0f);
+    BalanceControl_SetVelocityP(&bc, 0.0f);
+    BalanceControl_SetReference(&bc, 2.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 20; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    expect_true("settle profile must not apply a minimum kick",
+                bc.pwm_pulse == BC_PWM_CENTER_US);
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetOutputProfile(&bc, 140U, 160U, 0U);
+    BalanceControl_SetReference(&bc, -8.0f);
+    BalanceControl_SetRawPosition(&bc, 0.0f);
+    for (int i = 0; i < 40; i++) {
+        BalanceControl_Run(&bc);
+    }
+
+    expect_true("settle profile positive output must be capped at 160us",
+                bc.pwm_pulse <= (BC_PWM_CENTER_US + 160U));
+    expect_true("settle profile retains a positive corrective output",
+                bc.pwm_pulse > BC_PWM_CENTER_US);
+}
+
+static void test_pwm_override_bypasses_closed_loop_output(void)
+{
+    BalanceControl_t bc;
+
+    BalanceControl_Init(&bc);
+    BalanceControl_SetReference(&bc, -5.0f);
+    BalanceControl_SetRawPosition(&bc, 5.0f);
+    BalanceControl_SetPwmOverride(&bc, true,
+                                  (uint16_t)(BC_PWM_CENTER_US - 220U));
+    BalanceControl_Run(&bc);
+
+    expect_true("pwm override must command the requested pulse",
+                bc.pwm_pulse == (uint16_t)(BC_PWM_CENTER_US - 220U));
+
+    BalanceControl_SetPwmOverride(&bc, false, BC_PWM_CENTER_US);
+    BalanceControl_Run(&bc);
+
+    expect_true("disabled override returns control to closed loop",
+                bc.pwm_pulse != (uint16_t)(BC_PWM_CENTER_US - 220U));
+}
+
 int main(void)
 {
     test_positive_position_drives_pwm_below_center();
     test_negative_position_drives_pwm_above_center();
     test_full_t3_reference_has_enough_pwm_authority();
     test_far_error_gets_minimum_drive();
+    test_larger_error_commands_larger_tilt();
     test_near_target_uses_soft_output();
+    test_reverse_braking_slew_is_faster_than_normal_slew();
+    test_velocity_updates_only_from_new_timed_samples();
+    test_reset_reinitializes_velocity_sampling();
+    test_velocity_lookahead_brakes_before_target();
+    test_reverse_direction_has_more_tilt_authority();
+    test_zero_controller_output_uses_correct_drive_direction();
+    test_settle_profile_limits_output_and_disables_minimum_kick();
+    test_pwm_override_bypasses_closed_loop_output();
 
     if (failures != 0) {
         return EXIT_FAILURE;

@@ -2,6 +2,7 @@
 #define __OLED_H 
 
 #include "ti_msp_dl_config.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -139,6 +140,8 @@ void OLED_DisPlay_Off(void);
  *       屏幕上的显示才会真正更新。
  */
 void OLED_Refresh(void);
+void OLED_RequestRefresh(void);
+void OLED_RefreshStep(void);
 
 /**
  * @brief 清空 OLED 显存并刷新到屏幕

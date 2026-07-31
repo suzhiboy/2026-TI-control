@@ -71,24 +71,28 @@ extern "C" {
 /* PD42S1 步进电机 PWM 约束 */
 #define BC_PWM_MIN_US               (500U)          /* 最小脉宽        µs   */
 #define BC_PWM_MAX_US               (2500U)         /* 最大脉宽        µs   */
-#define BC_PWM_CENTER_US            (1550U)         /* 中位 (θ=0)     µs   */
+#define BC_PWM_CENTER_US            (1500U)         /* 中位 (θ=0)     µs   */
 #define BC_PWM_RANGE_US             (1000U)         /* 单侧范围        µs   */
 #define BC_PWM_PERIOD_US            (20000U)        /* 50 Hz 周期      µs   */
-#define BC_PWM_DELTA_LIMIT_US       (400U)
-#define BC_PWM_MIN_DRIVE_US         (175U)
-#define BC_PWM_SLEW_LIMIT_US        (10U)
-#define BC_PWM_DIRECTION_SIGN       (-1.0f)
+#define BC_PWM_NEGATIVE_DELTA_LIMIT_US (130U)
+#define BC_PWM_POSITIVE_DELTA_LIMIT_US (250U)
+#define BC_PWM_MIN_DRIVE_US         (130U)
+#define BC_PWM_SLEW_LIMIT_US         (15U)
+#define BC_PWM_REVERSE_SLEW_LIMIT_US (80U)
+#define BC_PWM_DIRECTION_SIGN       (1.0f)
 #define BC_RAD_TO_PWM_SCALE_DEFAULT (10000.0f)
 #define BC_MIN_DRIVE_ERROR_CM       (1.5f)
+#define BC_FULL_DRIVE_ERROR_CM      (6.0f)
 
 /* 安全限幅 */
-#define BC_ANGLE_MAX_RAD            (0.04f)         /* 初调最大倾角 ≈ 2.3° */
+#define BC_ANGLE_MAX_RAD            (0.09f)         /* 初调最大倾角 ≈ 5.2° */
 #define BC_ACCEL_MAX_MS2            (0.7f)          /* 初调最大期望加速度 m/s² */
 
 /* 默认 PID 参数 (需现场整定) */
 #define BC_DEFAULT_POS_KP           (0.12f)         /* 位置外环 比例增益    */
 #define BC_DEFAULT_POS_KD           (0.018f)        /* 位置外环 微分增益    */
 #define BC_DEFAULT_VEL_KP           (0.006f)        /* 速度内环 比例增益    */
+#define BC_POSITION_LOOKAHEAD_S      (0.20f)
 
 /* 低通滤波器系数 (100 Hz 采样) */
 #define BC_LPF_ALPHA_POS            (0.20f)         /* 位置 LPF 系数        */
@@ -108,6 +112,8 @@ typedef struct {
     /* ---------- 原始输入 (由外部 UART/IMU 回调写入, Run 中消费) ---------- */
     float        x_raw;             /* 视觉原始坐标    cm                  */
     bool         x_raw_updated;     /* 新数据标志, Run 消费后清零          */
+    float        x_sample_dt_s;     /* 当前视觉样本与上一样本的间隔 s      */
+    bool         has_position_sample;
 
     /* ---------- 状态估计 ---------- */
     float        x_pos;             /* 滤波后球位置    cm                  */
@@ -138,6 +144,11 @@ typedef struct {
     /* ---------- 运动学逆解 ---------- */
     float        rad_to_pwm_scale;  /* rad → PWM 脉宽缩放因子              */
     float        pwm_neutral;       /* PWM 中位值 (float 域, 防截断误差)   */
+    uint16_t     pwm_negative_delta_limit_us;
+    uint16_t     pwm_positive_delta_limit_us;
+    uint16_t     pwm_min_drive_us;
+    bool         pwm_override_enabled;
+    uint16_t     pwm_override_pulse_us;
 
     /* ---------- 最终输出 ---------- */
     uint16_t     pwm_pulse;         /* PWM 脉宽 [500, 2500] µs            */
@@ -181,6 +192,8 @@ void BalanceControl_PD42S1_Init(void (*uart_write)(const uint8_t *data, uint32_t
  * @note   线程安全: 单写一个 float + bool, 无临界区需求
  */
 void BalanceControl_SetRawPosition(BalanceControl_t *bc, float x_raw_cm);
+void BalanceControl_SetRawPositionTimed(BalanceControl_t *bc, float x_raw_cm,
+                                        float sample_dt_s);
 
 /**
  * @brief  设置目标位置
@@ -225,6 +238,13 @@ void BalanceControl_CalibrateCenter(BalanceControl_t *bc, uint16_t pwm_current);
  *         默认 ~6667 (当满行程 ±1000PWM 对应 ±0.15rad).
  */
 void BalanceControl_SetPwmScale(BalanceControl_t *bc, float scale);
+
+void BalanceControl_SetOutputProfile(BalanceControl_t *bc,
+                                     uint16_t negative_limit_us,
+                                     uint16_t positive_limit_us,
+                                     uint16_t minimum_drive_us);
+void BalanceControl_SetPwmOverride(BalanceControl_t *bc, bool enabled,
+                                   uint16_t pulse_us);
 
 /**
  * @brief  使能/禁能控制器输出

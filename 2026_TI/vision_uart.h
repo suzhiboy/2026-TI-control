@@ -26,9 +26,19 @@ typedef enum {
     VISION_PARSE_OK,
 } VisionParseResult;
 
+typedef struct {
+    uint32_t rx_bytes;
+    uint32_t rx_lines;
+    uint32_t parse_ok;
+    uint32_t parse_unknown;
+    uint32_t parse_bad_value;
+    uint32_t rx_overflow;
+} VisionUartStats;
+
 void VisionUart_Init(void);
 void VisionUart_Poll(uint32_t now_tick_10ms);
 VisionBallData VisionUart_GetLatest(void);
+VisionUartStats VisionUart_GetStats(void);
 VisionParseResult VisionProtocol_ParseLine(const char *line,
                                            VisionBallData *out,
                                            uint32_t now_tick_10ms);

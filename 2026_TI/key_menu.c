@@ -1,7 +1,12 @@
 /*
- * key_menu.c 鈥?4 閿彍鍗曠郴缁熷疄鐜?
+ * key_menu.c - six-key task launcher
  *
- * 鎸夐敭鎵弿 + 5 鎬?FSM + 浠诲姟娉ㄥ唽琛?+ OLED 鏄剧ず + PB13 澶嶇敤
+ * Scope of this file:
+ * - scan K1..K6 every 10 ms,
+ * - map K1..K6 directly to TASK_T1..TASK_T6,
+ * - start/stop the registered task entry points.
+ *
+ * Task internals stay behind the TaskDef init/run/stop callbacks.
  */
 
 #include "key_menu.h"
@@ -27,6 +32,47 @@ static void Start_SelectedTask(void);
 #define T2_LINE_ACTIVE_MIN          (3U)
 #define T2_LINE_ACTIVE_MAX          (4U)
 #define T2_LINE_CONFIRM_TICKS       (3U)
+#define T4_AB_DISTANCE_CM           (150.0f)
+#define T4_BASE_SPEED_CM_S          (20.0f)
+#define T4_ACCEL_STEP_CM_S          (0.35f)
+#define T4_DECEL_STEP_CM_S          (0.35f)
+#define T4_BRAKE_STEP_CM_S          (0.35f)
+#define T4_BRAKE_LEAD_CM            (8.0f)
+#define T4_BRAKE_HOLD_TICKS_10MS    (210U)
+#define T4_MAX_TIME_TICKS_10MS      (800U)
+#define T4_TURN_DIRECTION_SIGN      (1.0f)
+#define T5_LAP_DISTANCE_CM          T2_LAP_DISTANCE_CM
+#define T5_START_LINE_IGNORE_CM     T2_START_LINE_IGNORE_CM
+#define T5_SEARCH_START_CM          T2_SEARCH_START_CM
+#define T5_FAILSAFE_OVERRUN_CM      T2_FAILSAFE_OVERRUN_CM
+#define T5_STOP_COMPENSATION_CM     (13.0f)
+#define T5_MIN_RUN_TICKS_10MS       T2_MIN_RUN_TICKS_10MS
+#define T5_LINE_CONFIRM_TICKS       T2_LINE_CONFIRM_TICKS
+#define T5_BASE_SPEED_CM_S          (20.0f)
+#define T5_SLOWDOWN_START_CM        (614.0f)
+#define T5_FINAL_APPROACH_SPEED_CM_S (6.0f)
+#define T5_ACCEL_STEP_CM_S          (0.25f)
+#define T5_DECEL_STEP_CM_S          (0.20f)
+#define T5_BRAKE_STEP_CM_S          (0.45f)
+#define T5_MAX_TIME_TICKS_10MS      (3000U)
+#define T5_TURN_DIRECTION_SIGN      T4_TURN_DIRECTION_SIGN
+#define T6_LAP_DISTANCE_CM          T5_LAP_DISTANCE_CM
+#define T6_START_LINE_IGNORE_CM     T5_START_LINE_IGNORE_CM
+#define T6_SEARCH_START_CM          T5_SEARCH_START_CM
+#define T6_FAILSAFE_OVERRUN_CM      T5_FAILSAFE_OVERRUN_CM
+#define T6_STOP_COMPENSATION_CM     T2_STOP_COMPENSATION_CM
+#define T6_MIN_RUN_TICKS_10MS       T5_MIN_RUN_TICKS_10MS
+#define T6_LINE_CONFIRM_TICKS       T5_LINE_CONFIRM_TICKS
+#define T6_BASE_SPEED_CM_S          T5_BASE_SPEED_CM_S
+#define T6_MAX_TIME_TICKS_10MS      T5_MAX_TIME_TICKS_10MS
+#define T6_TURN_DIRECTION_SIGN      T5_TURN_DIRECTION_SIGN
+
+typedef enum {
+    T4_STATE_IDLE = 0,
+    T4_STATE_RUN_TO_B,
+    T4_STATE_BRAKE,
+    T4_STATE_DONE,
+} T4State;
 
 typedef enum {
     T2_STATE_IDLE = 0,
@@ -37,6 +83,26 @@ typedef enum {
     T2_STATE_BRAKE,
 } T2State;
 
+typedef enum {
+    T5_STATE_IDLE = 0,
+    T5_STATE_IGNORE_START_LINE,
+    T5_STATE_LAP,
+    T5_STATE_FIND_A_LINE,
+    T5_STATE_ADVANCE_TO_MARK,
+    T5_STATE_BRAKE,
+    T5_STATE_DONE,
+} T5State;
+
+typedef enum {
+    T6_STATE_IDLE = 0,
+    T6_STATE_IGNORE_START_LINE,
+    T6_STATE_LAP,
+    T6_STATE_FIND_A_LINE,
+    T6_STATE_ADVANCE_TO_MARK,
+    T6_STATE_BRAKE,
+    T6_STATE_DONE,
+} T6State;
+
 static MenuState menu;
 static uint32_t t2_elapsed_ticks_10ms = 0U;
 static uint32_t t2_last_logic_tick = 0U;
@@ -45,6 +111,29 @@ static bool t2_brake_requested = false;
 static T2State t2_state = T2_STATE_IDLE;
 static float t2_line_seen_distance_cm = 0.0f;
 static uint8_t t2_line_confirm_ticks = 0U;
+static uint32_t t4_elapsed_ticks_10ms = 0U;
+static uint32_t t4_finish_ticks_10ms = 0U;
+static uint32_t t4_last_logic_tick = 0U;
+static uint32_t t4_brake_requested_tick = 0U;
+static float t4_restore_base_speed = 0.0f;
+static bool t4_brake_requested = false;
+static T4State t4_state = T4_STATE_IDLE;
+static uint32_t t5_elapsed_ticks_10ms = 0U;
+static uint32_t t5_finish_ticks_10ms = 0U;
+static uint32_t t5_last_logic_tick = 0U;
+static float t5_restore_base_speed = 0.0f;
+static bool t5_brake_requested = false;
+static T5State t5_state = T5_STATE_IDLE;
+static float t5_line_seen_distance_cm = 0.0f;
+static uint8_t t5_line_confirm_ticks = 0U;
+static uint32_t t6_elapsed_ticks_10ms = 0U;
+static uint32_t t6_finish_ticks_10ms = 0U;
+static uint32_t t6_last_logic_tick = 0U;
+static float t6_restore_base_speed = 0.0f;
+static bool t6_brake_requested = false;
+static T6State t6_state = T6_STATE_IDLE;
+static float t6_line_seen_distance_cm = 0.0f;
+static uint8_t t6_line_confirm_ticks = 0U;
 
 static uint8_t T2_CountActiveSensors(void)
 {
@@ -69,6 +158,16 @@ static bool T2_StopLineDetected(void)
            (active_count <= T2_LINE_ACTIVE_MAX);
 }
 
+static bool T5_StopLineDetected(void)
+{
+    return T2_StopLineDetected();
+}
+
+static bool T6_StopLineDetected(void)
+{
+    return T2_StopLineDetected();
+}
+
 static void T2_RequestBrake(void)
 {
     if (!t2_brake_requested) {
@@ -76,6 +175,21 @@ static void T2_RequestBrake(void)
         t2_state = T2_STATE_BRAKE;
         LineTrack_Brake();
     }
+}
+
+static void T1_Init(void)
+{
+    T3Task_Stop();
+    ControlState_Set(CONTROL_IDLE);
+}
+
+static void T1_Run(void)
+{
+}
+
+static void T1_Stop(void)
+{
+    ControlState_Set(CONTROL_IDLE);
 }
 
 static void T2_Init(void)
@@ -91,6 +205,7 @@ static void T2_Init(void)
     ControlState_Set(CONTROL_TRACK_ONLY);
     LineTrack_Start(LineTrack_Get_BaseSpeed());
 }
+
 static void T2_Run(void)
 {
     if (t2_finish_ticks_10ms != 0U) {
@@ -156,9 +271,9 @@ static void T2_Run(void)
         t2_state = T2_STATE_IDLE;
     }
 }
+
 static void T2_Stop(void)
 {
-    /* ISR 涓?CONTROL_IDLE 鍒嗘敮浼氬仠鐢垫満 + 澶嶄綅绉垎 + PWM=1500 */
     ControlState_Set(CONTROL_IDLE);
 }
 
@@ -166,33 +281,433 @@ static void T3_Init(void)  { T3Task_Start(); }
 static void T3_Run(void)   { T3Task_Run(); }
 static void T3_Stop(void)  { T3Task_Stop(); }
 
-static void T4_Init(void)  { /* TODO: A鍒癇绋充腑蹇冨垵濮嬪寲 */ }
-static void T4_Run(void)   { /* TODO: 绉诲姩 + 绋崇悆鍦ㄤ腑蹇?*/ }
-static void T4_Stop(void)  { /* TODO: 鍋滄 */ }
+static void T4_RequestBrake(void)
+{
+    if (!t4_brake_requested) {
+        t4_brake_requested = true;
+        t4_brake_requested_tick = t4_elapsed_ticks_10ms;
+        t4_state = T4_STATE_BRAKE;
+        LineTrack_Brake();
+    }
+}
 
-static void T5_Init(void)  { /* TODO: 涓€鍦堢ǔ涓績鍒濆鍖?*/ }
-static void T5_Run(void)   { /* TODO: 寰抗 + 绋崇悆鍦ㄤ腑蹇?*/ }
-static void T5_Stop(void)  { /* TODO: 鍋滄 */ }
+static void T4_Init(void)
+{
+    T3Task_Stop();
+    t4_elapsed_ticks_10ms = 0U;
+    t4_finish_ticks_10ms = 0U;
+    t4_last_logic_tick = 0U;
+    t4_brake_requested_tick = 0U;
+    t4_brake_requested = false;
+    t4_state = T4_STATE_RUN_TO_B;
+    t4_restore_base_speed = LineTrack_Get_BaseSpeed();
 
-static void T6_Init(void)  { /* TODO: 涓€鍦堢ǔ浠绘剰鐐瑰垵濮嬪寲 */ }
-static void T6_Run(void)   { /* TODO: 寰抗 + 绋崇悆鍦?target_mm */ }
-static void T6_Stop(void)  { /* TODO: 鍋滄 */ }
+    T3Task_StartCenterHold();
+    LineTrack_SetTurnDirectionSign(T4_TURN_DIRECTION_SIGN);
+    LineTrack_SetMotionProfile(T4_ACCEL_STEP_CM_S,
+        T4_DECEL_STEP_CM_S, T4_BRAKE_STEP_CM_S);
+    LineTrack_Start(T4_BASE_SPEED_CM_S);
+    ControlState_Set(CONTROL_DYNAMIC_BALL);
+}
 
-/* ======================================================================== *
- *  浠诲姟娉ㄥ唽琛?
- * ======================================================================== */
+static void T4_Run(void)
+{
+    if (t4_finish_ticks_10ms != 0U) {
+        return;
+    }
+
+    if (t4_last_logic_tick == t4_elapsed_ticks_10ms) {
+        return;
+    }
+    t4_last_logic_tick = t4_elapsed_ticks_10ms;
+
+    if ((t4_state == T4_STATE_RUN_TO_B) &&
+        (g_Encoder.distance_cm >= (T4_AB_DISTANCE_CM - T4_BRAKE_LEAD_CM))) {
+        T4_RequestBrake();
+    }
+
+    if (t4_brake_requested && !LineTrack_IsRunning() &&
+        ((t4_elapsed_ticks_10ms - t4_brake_requested_tick) >=
+         T4_BRAKE_HOLD_TICKS_10MS)) {
+        t4_finish_ticks_10ms = t4_elapsed_ticks_10ms;
+        t4_state = T4_STATE_DONE;
+        LineTrack_SetBaseSpeed(t4_restore_base_speed);
+        LineTrack_ResetMotionProfile();
+        T3Task_Stop();
+        LineTrack_SetTurnDirectionSign(T4_TURN_DIRECTION_SIGN);
+        ControlState_Set(CONTROL_IDLE);
+        PB13_SetGPIO();
+        menu.state = SYS_STOPPED;
+    }
+}
+
+static void T4_Stop(void)
+{
+    LineTrack_Stop();
+    LineTrack_SetBaseSpeed(t4_restore_base_speed);
+    LineTrack_ResetMotionProfile();
+    T3Task_Stop();
+    LineTrack_SetTurnDirectionSign(T4_TURN_DIRECTION_SIGN);
+    t4_state = T4_STATE_IDLE;
+    t4_brake_requested_tick = 0U;
+    t4_brake_requested = false;
+    ControlState_Set(CONTROL_IDLE);
+}
+
+static void T5_RequestBrake(void)
+{
+    if (!t5_brake_requested) {
+        t5_brake_requested = true;
+        t5_state = T5_STATE_BRAKE;
+        LineTrack_Brake();
+    }
+}
+
+static void T5_UpdateApproachSpeed(void)
+{
+    if ((t5_state == T5_STATE_IDLE) ||
+        (t5_state == T5_STATE_BRAKE) ||
+        (t5_state == T5_STATE_DONE)) {
+        return;
+    }
+
+    if (g_Encoder.distance_cm >= T5_SLOWDOWN_START_CM) {
+        LineTrack_SetBaseSpeed(T5_FINAL_APPROACH_SPEED_CM_S);
+    }
+}
+
+static void T5_Init(void)
+{
+    T3Task_Stop();
+    t5_elapsed_ticks_10ms = 0U;
+    t5_finish_ticks_10ms = 0U;
+    t5_last_logic_tick = 0U;
+    t5_restore_base_speed = LineTrack_Get_BaseSpeed();
+    t5_brake_requested = false;
+    t5_state = T5_STATE_IGNORE_START_LINE;
+    t5_line_seen_distance_cm = 0.0f;
+    t5_line_confirm_ticks = 0U;
+
+    T3Task_StartCenterHold();
+    LineTrack_SetTurnDirectionSign(T5_TURN_DIRECTION_SIGN);
+    LineTrack_SetMotionProfile(T5_ACCEL_STEP_CM_S,
+                               T5_DECEL_STEP_CM_S,
+                               T5_BRAKE_STEP_CM_S);
+    LineTrack_Start(T5_BASE_SPEED_CM_S);
+    ControlState_Set(CONTROL_DYNAMIC_BALL);
+}
+
+static void T5_Run(void)
+{
+    if (t5_finish_ticks_10ms != 0U) {
+        return;
+    }
+
+    if (t5_last_logic_tick == t5_elapsed_ticks_10ms) {
+        return;
+    }
+    t5_last_logic_tick = t5_elapsed_ticks_10ms;
+    T5_UpdateApproachSpeed();
+
+    switch (t5_state) {
+        case T5_STATE_IGNORE_START_LINE:
+            if ((t5_elapsed_ticks_10ms >= T5_MIN_RUN_TICKS_10MS) &&
+                (g_Encoder.distance_cm >= T5_START_LINE_IGNORE_CM)) {
+                t5_state = T5_STATE_LAP;
+            }
+            break;
+
+        case T5_STATE_LAP:
+            if (g_Encoder.distance_cm >= T5_SEARCH_START_CM) {
+                t5_state = T5_STATE_FIND_A_LINE;
+                t5_line_confirm_ticks = 0U;
+            }
+            break;
+
+        case T5_STATE_FIND_A_LINE:
+            if (T5_StopLineDetected()) {
+                if (t5_line_confirm_ticks < T5_LINE_CONFIRM_TICKS) {
+                    t5_line_confirm_ticks++;
+                }
+            } else {
+                t5_line_confirm_ticks = 0U;
+            }
+
+            if (t5_line_confirm_ticks >= T5_LINE_CONFIRM_TICKS) {
+                t5_line_seen_distance_cm = g_Encoder.distance_cm;
+                t5_state = T5_STATE_ADVANCE_TO_MARK;
+            } else if (g_Encoder.distance_cm >=
+                       (T5_LAP_DISTANCE_CM + T5_FAILSAFE_OVERRUN_CM)) {
+                T5_RequestBrake();
+            }
+            break;
+
+        case T5_STATE_ADVANCE_TO_MARK:
+            if ((g_Encoder.distance_cm - t5_line_seen_distance_cm) >=
+                T5_STOP_COMPENSATION_CM) {
+                T5_RequestBrake();
+            }
+            break;
+
+        case T5_STATE_BRAKE:
+        case T5_STATE_DONE:
+        case T5_STATE_IDLE:
+        default:
+            break;
+    }
+
+    if (t5_brake_requested && !LineTrack_IsRunning()) {
+        t5_finish_ticks_10ms = t5_elapsed_ticks_10ms;
+        t5_state = T5_STATE_DONE;
+        LineTrack_SetBaseSpeed(t5_restore_base_speed);
+        LineTrack_ResetMotionProfile();
+        T3Task_Stop();
+        LineTrack_SetTurnDirectionSign(T5_TURN_DIRECTION_SIGN);
+        ControlState_Set(CONTROL_IDLE);
+        PB13_SetGPIO();
+        menu.state = SYS_STOPPED;
+    }
+}
+
+static void T5_Stop(void)
+{
+    LineTrack_Stop();
+    LineTrack_SetBaseSpeed(t5_restore_base_speed);
+    LineTrack_ResetMotionProfile();
+    T3Task_Stop();
+    LineTrack_SetTurnDirectionSign(T5_TURN_DIRECTION_SIGN);
+    t5_state = T5_STATE_IDLE;
+    t5_brake_requested = false;
+    ControlState_Set(CONTROL_IDLE);
+}
+
+static void T6_RequestBrake(void)
+{
+    if (!t6_brake_requested) {
+        t6_brake_requested = true;
+        t6_state = T6_STATE_BRAKE;
+        LineTrack_Brake();
+    }
+}
+
+static void T6_Init(void)
+{
+    T3Task_Stop();
+    t6_elapsed_ticks_10ms = 0U;
+    t6_finish_ticks_10ms = 0U;
+    t6_last_logic_tick = 0U;
+    t6_restore_base_speed = LineTrack_Get_BaseSpeed();
+    t6_brake_requested = false;
+    t6_state = T6_STATE_IGNORE_START_LINE;
+    t6_line_seen_distance_cm = 0.0f;
+    t6_line_confirm_ticks = 0U;
+
+    T3Task_StartTargetHold(menu.target_mm);
+    LineTrack_SetTurnDirectionSign(T6_TURN_DIRECTION_SIGN);
+    LineTrack_Start(T6_BASE_SPEED_CM_S);
+    ControlState_Set(CONTROL_DYNAMIC_BALL);
+}
+
+static void T6_Run(void)
+{
+    if (t6_finish_ticks_10ms != 0U) {
+        return;
+    }
+
+    if (t6_last_logic_tick == t6_elapsed_ticks_10ms) {
+        return;
+    }
+    t6_last_logic_tick = t6_elapsed_ticks_10ms;
+
+    switch (t6_state) {
+        case T6_STATE_IGNORE_START_LINE:
+            if ((t6_elapsed_ticks_10ms >= T6_MIN_RUN_TICKS_10MS) &&
+                (g_Encoder.distance_cm >= T6_START_LINE_IGNORE_CM)) {
+                t6_state = T6_STATE_LAP;
+            }
+            break;
+
+        case T6_STATE_LAP:
+            if (g_Encoder.distance_cm >= T6_SEARCH_START_CM) {
+                t6_state = T6_STATE_FIND_A_LINE;
+                t6_line_confirm_ticks = 0U;
+            }
+            break;
+
+        case T6_STATE_FIND_A_LINE:
+            if (T6_StopLineDetected()) {
+                if (t6_line_confirm_ticks < T6_LINE_CONFIRM_TICKS) {
+                    t6_line_confirm_ticks++;
+                }
+            } else {
+                t6_line_confirm_ticks = 0U;
+            }
+
+            if (t6_line_confirm_ticks >= T6_LINE_CONFIRM_TICKS) {
+                t6_line_seen_distance_cm = g_Encoder.distance_cm;
+                t6_state = T6_STATE_ADVANCE_TO_MARK;
+            } else if (g_Encoder.distance_cm >=
+                       (T6_LAP_DISTANCE_CM + T6_FAILSAFE_OVERRUN_CM)) {
+                T6_RequestBrake();
+            }
+            break;
+
+        case T6_STATE_ADVANCE_TO_MARK:
+            if ((g_Encoder.distance_cm - t6_line_seen_distance_cm) >=
+                T6_STOP_COMPENSATION_CM) {
+                T6_RequestBrake();
+            }
+            break;
+
+        case T6_STATE_BRAKE:
+        case T6_STATE_DONE:
+        case T6_STATE_IDLE:
+        default:
+            break;
+    }
+
+    if (t6_brake_requested && !LineTrack_IsRunning()) {
+        t6_finish_ticks_10ms = t6_elapsed_ticks_10ms;
+        t6_state = T6_STATE_DONE;
+        LineTrack_SetBaseSpeed(t6_restore_base_speed);
+        T3Task_Stop();
+        LineTrack_SetTurnDirectionSign(T6_TURN_DIRECTION_SIGN);
+        ControlState_Set(CONTROL_IDLE);
+        PB13_SetGPIO();
+        menu.state = SYS_STOPPED;
+    }
+}
+
+static void T6_Stop(void)
+{
+    LineTrack_Stop();
+    LineTrack_SetBaseSpeed(t6_restore_base_speed);
+    T3Task_Stop();
+    LineTrack_SetTurnDirectionSign(T6_TURN_DIRECTION_SIGN);
+    t6_state = T6_STATE_IDLE;
+    t6_brake_requested = false;
+    ControlState_Set(CONTROL_IDLE);
+}
+
+static void Task_OLED_BlankTail(void)
+{
+    OLED_ShowLineString(2, 1, "                ");
+    OLED_ShowLineString(3, 1, "                ");
+    OLED_ShowLineString(4, 1, "                ");
+}
+
+static void T1_OLED(void)
+{
+    OLED_ShowLineString(1, 1, "T1 Reserved     ");
+    Task_OLED_BlankTail();
+}
+
+static void T2_OLED(void)
+{
+    char buf[22];
+    uint32_t shown_ticks = (t2_finish_ticks_10ms != 0U) ?
+        t2_finish_ticks_10ms : t2_elapsed_ticks_10ms;
+
+    OLED_ShowLineString(1, 1, "T2 Lap Stop     ");
+    snprintf(buf, sizeof(buf), "t:%2lu.%02lus d:%3d",
+             (unsigned long)(shown_ticks / 100U),
+             (unsigned long)(shown_ticks % 100U),
+             (int)g_Encoder.distance_cm);
+    OLED_ShowLineString(2, 1, buf);
+    OLED_ShowLineString(3, 1,
+        (t2_finish_ticks_10ms != 0U) ? "[STOPPED]       " : "[RUNNING]       ");
+    OLED_ShowLineString(4, 1, "                ");
+}
+
+static void T3_OLED(void)  { T3Task_OLED(); }
+
+static void T4_OLED(void)
+{
+    char buf[22];
+    uint32_t shown_ticks = (t4_finish_ticks_10ms != 0U) ?
+        t4_finish_ticks_10ms : t4_elapsed_ticks_10ms;
+    int16_t ball_x_mm = T3Task_GetBallXMM();
+
+    OLED_ShowLineString(1, 1, "T4 AB Center    ");
+    snprintf(buf, sizeof(buf), "t:%2lu.%02lus d:%3d",
+             (unsigned long)(shown_ticks / 100U),
+             (unsigned long)(shown_ticks % 100U),
+             (int)g_Encoder.distance_cm);
+    OLED_ShowLineString(2, 1, buf);
+    if (T3Task_HasValidVision()) {
+        snprintf(buf, sizeof(buf), "x:%+4dmm       ", (int)ball_x_mm);
+    } else {
+        snprintf(buf, sizeof(buf), "x:----mm       ");
+    }
+    OLED_ShowLineString(3, 1, buf);
+    OLED_ShowLineString(4, 1,
+        (shown_ticks <= T4_MAX_TIME_TICKS_10MS) ? "time OK         " : "time >8s       ");
+}
+
+static void T5_OLED(void)
+{
+    char buf[22];
+    uint32_t shown_ticks = (t5_finish_ticks_10ms != 0U) ?
+        t5_finish_ticks_10ms : t5_elapsed_ticks_10ms;
+    int16_t ball_x_mm = T3Task_GetBallXMM();
+
+    OLED_ShowLineString(1, 1, "T5 Lap Center   ");
+    snprintf(buf, sizeof(buf), "t:%2lu.%02lus d:%3d",
+             (unsigned long)(shown_ticks / 100U),
+             (unsigned long)(shown_ticks % 100U),
+             (int)g_Encoder.distance_cm);
+    OLED_ShowLineString(2, 1, buf);
+    if (T3Task_HasValidVision()) {
+        snprintf(buf, sizeof(buf), "x:%+4dmm       ", (int)ball_x_mm);
+    } else {
+        snprintf(buf, sizeof(buf), "x:----mm       ");
+    }
+    OLED_ShowLineString(3, 1, buf);
+    OLED_ShowLineString(4, 1,
+        (shown_ticks <= T5_MAX_TIME_TICKS_10MS) ? "time OK         " : "time >30s      ");
+}
+
+static void T6_OLED(void)
+{
+    char buf[22];
+    uint32_t shown_ticks = (t6_finish_ticks_10ms != 0U) ?
+        t6_finish_ticks_10ms : t6_elapsed_ticks_10ms;
+    int16_t ball_x_mm = T3Task_GetBallXMM();
+
+    OLED_ShowLineString(1, 1, "T6 Lap Target   ");
+    snprintf(buf, sizeof(buf), "t:%2lu.%02lus d:%3d",
+             (unsigned long)(shown_ticks / 100U),
+             (unsigned long)(shown_ticks % 100U),
+             (int)g_Encoder.distance_cm);
+    OLED_ShowLineString(2, 1, buf);
+    if (T3Task_HasValidVision()) {
+        snprintf(buf, sizeof(buf), "T%+4d X%+4dmm", menu.target_mm,
+                 (int)ball_x_mm);
+    } else {
+        snprintf(buf, sizeof(buf), "T%+4d X----mm", menu.target_mm);
+    }
+    OLED_ShowLineString(3, 1, buf);
+    OLED_ShowLineString(4, 1,
+        (shown_ticks <= T6_MAX_TIME_TICKS_10MS) ? "time OK         " : "time >30s      ");
+}
 
 static const TaskDef task_table[] = {
-    [TASK_T2] = { "T2 Lap Stop",    TASK_T2, T2_Init, T2_Run, T2_Stop, true  },
-    [TASK_T3] = { "T3 Ball Static", TASK_T3, T3_Init, T3_Run, T3_Stop, false },
-    [TASK_T4] = { "T4 AB Center",   TASK_T4, T4_Init, T4_Run, T4_Stop, false },
-    [TASK_T5] = { "T5 Lap Center",  TASK_T5, T5_Init, T5_Run, T5_Stop, true  },
-    [TASK_T6] = { "T6 Lap Target",  TASK_T6, T6_Init, T6_Run, T6_Stop, true  },
+    [TASK_T1] = { "T1 Reserved",    TASK_T1, T1_Init, T1_Run, T1_Stop, T1_OLED, false },
+    [TASK_T2] = { "T2 Lap Stop",    TASK_T2, T2_Init, T2_Run, T2_Stop, T2_OLED, true  },
+    [TASK_T3] = { "T3 Ball Static", TASK_T3, T3_Init, T3_Run, T3_Stop, T3_OLED, false },
+    [TASK_T4] = { "T4 AB Center",   TASK_T4, T4_Init, T4_Run, T4_Stop, T4_OLED, true  },
+    [TASK_T5] = { "T5 Lap Center",  TASK_T5, T5_Init, T5_Run, T5_Stop, T5_OLED, true  },
+    [TASK_T6] = { "T6 Lap Target",  TASK_T6, T6_Init, T6_Run, T6_Stop, T6_OLED, true  },
 };
 
-/* ======================================================================== *
- *  鐘舵€佸悕鏌ユ壘琛?
- * ======================================================================== */
+static const TaskID key_task_map[KEY_COUNT] = {
+    [KEY_IDX_K1] = TASK_T1,
+    [KEY_IDX_K2] = TASK_T2,
+    [KEY_IDX_K3] = TASK_T3,
+    [KEY_IDX_K4] = TASK_T4,
+    [KEY_IDX_K5] = TASK_T5,
+    [KEY_IDX_K6] = TASK_T6,
+};
 
 static const char *state_names[] = {
     [SYS_MENU]    = "[MENU]",
@@ -202,22 +717,19 @@ static const char *state_names[] = {
     [SYS_FAULT]   = "[FAULT]",
 };
 
-/* ======================================================================== *
- *  PB13 妯″紡鍒囨崲 (K2 涓?AD2 鍒嗘椂澶嶇敤)
- *
- *  K1/K3/K4 鐢?SYSCFG_DL_GPIO_init() 缁熶竴閰嶇疆涓?GPIO 杈撳叆+涓婃媺.
- *  K2 (PB13) 鍦ㄩ潪 RUNNING 鎬佹墜鍔ㄥ垏涓?GPIO 杈撳叆+涓婃媺璇婚敭;
- *          鍦?RUNNING 鎬佸垏鍥炴暟瀛楄緭鍑轰緵寰抗 AD2 浣跨敤.
- * ======================================================================== */
-
-static void PB13_SetGPIO(void)
+static void Key_SetGPIOInput(uint32_t iomux)
 {
     DL_GPIO_initDigitalInputFeatures(
-        GPIO_SENSOR_AD2_IOMUX,
+        iomux,
         DL_GPIO_INVERSION_DISABLE,
         DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_DISABLE,
         DL_GPIO_WAKEUP_DISABLE);
+}
+
+static void PB13_SetGPIO(void)
+{
+    Key_SetGPIOInput(KEY_K2_IOMUX);
 }
 
 static void PB13_SetSensorMuxOutput(void)
@@ -227,37 +739,41 @@ static void PB13_SetSensorMuxOutput(void)
     DL_GPIO_clearPins(GPIO_SENSOR_PORT, GPIO_SENSOR_AD2_PIN);
 }
 
-/* ======================================================================== *
- *  鎸夐敭 GPIO 璇诲彇瀹?
- * ======================================================================== */
-
-/* 涓婃媺杈撳叆: 鎸変笅=浣庣數骞?0), 鏉惧紑=楂樼數骞?闈?) */
 #define KEY_PRESSED(port, pin)  (DL_GPIO_readPins(port, pin) == 0U)
 
-/* ======================================================================== *
- *  KeyMenu_Init
- * ======================================================================== */
+static bool Key_IsPressed(uint8_t idx)
+{
+    switch (idx) {
+        case KEY_IDX_K1: return KEY_PRESSED(KEY_K1_PORT, KEY_K1_PIN);
+        case KEY_IDX_K2: return KEY_PRESSED(KEY_K2_PORT, KEY_K2_PIN);
+        case KEY_IDX_K3: return KEY_PRESSED(KEY_K3_PORT, KEY_K3_PIN);
+        case KEY_IDX_K4: return KEY_PRESSED(KEY_K4_PORT, KEY_K4_PIN);
+        case KEY_IDX_K5: return KEY_PRESSED(KEY_K5_PORT, KEY_K5_PIN);
+        case KEY_IDX_K6: return KEY_PRESSED(KEY_K6_PORT, KEY_K6_PIN);
+        default:         return false;
+    }
+}
 
 void KeyMenu_Init(void)
 {
-    /*
-     * K1(PB12)/K3(PB2)/K4(PB3) 宸茬敱 SYSCFG_DL_GPIO_init() 閰嶇疆涓?
-     * GPIO 杈撳叆 + 涓婃媺 (瑙?GPIO_KEY 缁?. 杩欓噷鍙渶棰濆閰嶇疆 K2(PB13).
-     */
-    PB13_SetGPIO();  /* PB13 鍒濆涓?GPIO 妯″紡 (MENU 鎬侀渶瑕佽閿? */
+    Key_SetGPIOInput(KEY_K1_IOMUX);
+    PB13_SetGPIO();
+    Key_SetGPIOInput(KEY_K3_IOMUX);
+    Key_SetGPIOInput(KEY_K4_IOMUX);
+    Key_SetGPIOInput(KEY_K5_IOMUX);
+    Key_SetGPIOInput(KEY_K6_IOMUX);
 
-    /* 鐘舵€佸垵濮嬪寲 */
     menu.state          = SYS_MENU;
     menu.task_id        = TASK_ID_DEFAULT;
     menu.target_mm      = 0;
     menu.boot_ticks     = 0;
     menu.startup_window = true;
 
-    for (int i = 0; i < KEY_COUNT; i++) {
+    for (uint8_t i = 0U; i < KEY_COUNT; i++) {
         menu.keys[i].pressed     = false;
         menu.keys[i].short_flag  = false;
         menu.keys[i].long_flag   = false;
-        menu.keys[i].press_ticks = 0;
+        menu.keys[i].press_ticks = 0U;
     }
 }
 
@@ -267,42 +783,42 @@ void KeyMenu_StartTask(TaskID task_id)
         return;
     }
 
+    if (menu.state == SYS_RUNNING) {
+        const TaskDef *old_task = KeyMenu_GetCurrentTask();
+        if (old_task && old_task->stop) {
+            old_task->stop();
+        }
+        PB13_SetGPIO();
+    }
+
     menu.task_id = task_id;
     Start_SelectedTask();
 }
 
-/* ======================================================================== *
- *  鍗曢敭鎵弿 (姣忎釜 10ms tick 璋冪敤涓€娆?
- * ======================================================================== */
-
 static void Key_ScanOne(KeyState *k, bool is_pressed)
 {
     if (is_pressed) {
-        /* 鎸変笅涓?*/
         if (k->press_ticks < 0xFFFFU) {
             k->press_ticks++;
         }
-        /* 鍒拌揪闀挎寜闃堝€? 缃暱鎸夋爣蹇?(浠呰Е鍙戜竴娆? 涔嬪悗娓呴浂璁℃暟闃查噸澶? */
         if (k->press_ticks == KEY_LONG_TICKS) {
-            k->long_flag  = true;
-            k->press_ticks = 0;    /* 闃叉閲嶅瑙﹀彂 */
+            k->long_flag = true;
+            k->press_ticks = 0U;
         }
     } else {
-        /* 鏉惧紑浜? 鍒ゆ柇鏄煭鎸夎繕鏄暱鎸夊凡瑙﹀彂杩?*/
-        if (k->press_ticks > 0 && k->press_ticks < KEY_LONG_TICKS) {
+        if (k->press_ticks > 0U && k->press_ticks < KEY_LONG_TICKS) {
             k->short_flag = true;
         }
-        k->press_ticks = 0;
+        k->press_ticks = 0U;
     }
     k->pressed = is_pressed;
 }
 
-/* ======================================================================== *
- *  娑堣垂鎸夐敭鏍囧織 (杩斿洖鏄惁鏈変簨浠跺緟澶勭悊)
- * ======================================================================== */
-
 static bool Key_ConsumeShort(uint8_t idx)
 {
+    if (idx >= KEY_COUNT) {
+        return false;
+    }
     if (menu.keys[idx].short_flag) {
         menu.keys[idx].short_flag = false;
         return true;
@@ -312,6 +828,9 @@ static bool Key_ConsumeShort(uint8_t idx)
 
 static bool Key_ConsumeLong(uint8_t idx)
 {
+    if (idx >= KEY_COUNT) {
+        return false;
+    }
     if (menu.keys[idx].long_flag) {
         menu.keys[idx].long_flag = false;
         return true;
@@ -319,41 +838,105 @@ static bool Key_ConsumeLong(uint8_t idx)
     return false;
 }
 
-/* ======================================================================== *
- *  娓呴櫎鎵€鏈夋寜閿爣蹇?(鐘舵€佸垏鎹㈡椂涓㈠純娈嬬暀浜嬩欢)
- * ======================================================================== */
-
 static void Key_FlushAll(void)
 {
-    for (int i = 0; i < KEY_COUNT; i++) {
+    for (uint8_t i = 0U; i < KEY_COUNT; i++) {
         menu.keys[i].short_flag = false;
-        menu.keys[i].long_flag  = false;
-        menu.keys[i].press_ticks = 0;
+        menu.keys[i].long_flag = false;
+        menu.keys[i].press_ticks = 0U;
     }
 }
 
-/* ======================================================================== *
- *  target_mm 鈥?鐗╃悊鍗曚綅: mm锛堟绫筹級
- *  娉? 1 mm = 0.1 cm, 鍗虫瘡姝?0.1 鍘樼背
- *  绠￠亾鎬昏绋嬬害 卤120 mm (卤12 cm), 瓒呭嚭鑷姩 clamp
- * ======================================================================== */
+static void Key_ClearOne(uint8_t idx)
+{
+    if (idx < KEY_COUNT) {
+        menu.keys[idx].pressed = false;
+        menu.keys[idx].short_flag = false;
+        menu.keys[idx].long_flag = false;
+        menu.keys[idx].press_ticks = 0U;
+    }
+}
 
-#define TARGET_MIN_MM   (-120)   /* 姘寸宸︽瀬闄?(mm) = -12.0 cm */
-#define TARGET_MAX_MM   ( 120)   /* 姘寸鍙虫瀬闄?(mm) = +12.0 cm */
-#define TARGET_STEP_MM  (   1)   /* K3/K4 姣忔寜涓€娆″鍑忛噺: 1 mm = 0.1 cm */
+static bool Key_StartMappedTask(uint8_t idx)
+{
+    if (idx >= KEY_COUNT) {
+        return false;
+    }
+
+    if (Key_ConsumeShort(idx)) {
+        KeyMenu_StartTask(key_task_map[idx]);
+        return true;
+    }
+
+    return false;
+}
+
+static bool Key_StartAnyMappedTask(void)
+{
+    for (uint8_t i = 0U; i < KEY_COUNT; i++) {
+        if (Key_StartMappedTask(i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool Key_ConsumeCurrentTaskShort(void)
+{
+    for (uint8_t i = 0U; i < KEY_COUNT; i++) {
+        if (key_task_map[i] == menu.task_id) {
+            return Key_ConsumeShort(i);
+        }
+    }
+    return false;
+}
+
+static bool Key_ShouldScanWhileRunning(uint8_t idx)
+{
+    if (idx >= KEY_COUNT) {
+        return false;
+    }
+    return (key_task_map[idx] == menu.task_id);
+}
+
+static void Key_StopCurrentTask(void)
+{
+    const TaskDef *task = KeyMenu_GetCurrentTask();
+
+    if (task && task->stop) {
+        task->stop();
+    }
+    PB13_SetGPIO();
+    menu.state = SYS_STOPPED;
+    Key_FlushAll();
+}
+
+#define TARGET_MIN_MM   (-120)
+#define TARGET_MAX_MM   ( 120)
 
 static void Target_Clamp(void)
 {
-    if (menu.target_mm < TARGET_MIN_MM) menu.target_mm = TARGET_MIN_MM;
-    if (menu.target_mm > TARGET_MAX_MM) menu.target_mm = TARGET_MAX_MM;
+    if (menu.target_mm < TARGET_MIN_MM) {
+        menu.target_mm = TARGET_MIN_MM;
+    }
+    if (menu.target_mm > TARGET_MAX_MM) {
+        menu.target_mm = TARGET_MAX_MM;
+    }
 }
 
 static void Start_SelectedTask(void)
 {
-    const TaskDef *task = &task_table[menu.task_id];
+    const TaskDef *task = KeyMenu_GetCurrentTask();
 
+    if (task == NULL) {
+        return;
+    }
+
+    Target_Clamp();
     if (task->needs_sensor) {
         PB13_SetSensorMuxOutput();
+    } else {
+        PB13_SetGPIO();
     }
     if (task->init) {
         task->init();
@@ -362,162 +945,64 @@ static void Start_SelectedTask(void)
     Key_FlushAll();
 }
 
-/* ======================================================================== *
- *  鐘舵€佽涓哄鐞?
- * ======================================================================== */
-
 static void FSM_Menu(void)
 {
-    /* K1 鐭寜: task_id++ */
-    if (Key_ConsumeShort(KEY_IDX_K1)) {
-        if ((int)menu.task_id < TASK_ID_MAX) {
-            menu.task_id = (TaskID)((int)menu.task_id + 1);
-        }
-    }
-
-    /* K1 闀挎寜: 纭浠诲姟 鈫?READY */
-    if (Key_ConsumeLong(KEY_IDX_K1)) {
-        menu.state = SYS_READY;
-        Key_FlushAll();
-        return;
-    }
-
-    /* K2 鐭寜: task_id-- */
-    if (Key_ConsumeShort(KEY_IDX_K2)) {
-        if ((int)menu.task_id > TASK_ID_MIN) {
-            menu.task_id = (TaskID)((int)menu.task_id - 1);
-        }
-    }
-
-    /* K2 闀挎寜: 鎭㈠榛樿鍙傛暟 */
-    if (Key_ConsumeLong(KEY_IDX_K2)) {
-        menu.task_id   = TASK_ID_DEFAULT;
-        menu.target_mm = 0;
-    }
-
-    /* 涓婄數 2 绉掔獥鍙? K3/K4 璋冭妭 target_mm */
-    if (menu.startup_window) {
-        if (Key_ConsumeShort(KEY_IDX_K3)) {
-            menu.target_mm += TARGET_STEP_MM;
-            Target_Clamp();
-        }
-        if (Key_ConsumeShort(KEY_IDX_K4)) {
-            menu.target_mm -= TARGET_STEP_MM;
-            Target_Clamp();
-        }
-    }
+    (void)Key_StartAnyMappedTask();
 }
 
 static void FSM_Ready(void)
 {
-    /* K1 鐭寜: 鍚姩浠诲姟 鈫?RUNNING */
-    if (Key_ConsumeShort(KEY_IDX_K1)) {
-        Start_SelectedTask();
-        return;
-    }
-
-    /* K2 鐭寜: 鍥?MENU */
-    if (Key_ConsumeShort(KEY_IDX_K2)) {
-        menu.state = SYS_MENU;
-        Key_FlushAll();
-        return;
-    }
-
-    /* K1 闀挎寜: 娓呴浂缂栫爜鍣?+ 璁℃椂 + 鎽嗘潌闆剁偣 */
-    if (Key_ConsumeLong(KEY_IDX_K1)) {
-        /* TODO: 璋冪敤缂栫爜鍣ㄦ竻闆?API */
-        /* TODO: 璋冪敤璁℃椂娓呴浂 API */
-        /* TODO: 璋冪敤鎽嗘潌瑙掑害闆剁偣鏍″噯 API */
-    }
+    (void)Key_StartAnyMappedTask();
 }
 
 static void FSM_Running(void)
 {
-    /* K1 闀挎寜: 鎬ュ仠 鈫?STOPPED */
-    if (Key_ConsumeLong(KEY_IDX_K1)) {
-        const TaskDef *task = &task_table[menu.task_id];
-        if (task->stop) {
-            task->stop();
-        }
-        /* 鎭㈠ PB13 涓?GPIO */
-        PB13_SetGPIO();
-        menu.state = SYS_STOPPED;
-        Key_FlushAll();
-        return;
+    if (Key_ConsumeCurrentTaskShort()) {
+        Key_StopCurrentTask();
     }
-
-    /* K3 鐭寜: 浜哄伐涓 鈫?STOPPED */
-    if (Key_ConsumeShort(KEY_IDX_K3)) {
-        const TaskDef *task = &task_table[menu.task_id];
-        if (task->stop) {
-            task->stop();
-        }
-        PB13_SetGPIO();
-        menu.state = SYS_STOPPED;
-        Key_FlushAll();
-        return;
-    }
-
-    /* K2 涓嶅搷搴?(PB13 姝ゆ椂鐢ㄤ綔 AD2) */
 }
 
 static void FSM_Stopped(void)
 {
-    /* K1 鐭寜: 閲嶆柊杩涘叆 READY */
-    if (Key_ConsumeShort(KEY_IDX_K1)) {
-        menu.state = SYS_READY;
-        Key_FlushAll();
-        return;
-    }
-
-    /* K2 鐭寜: 鍥?MENU */
-    if (Key_ConsumeShort(KEY_IDX_K2)) {
-        menu.state = SYS_MENU;
-        Key_FlushAll();
-        return;
-    }
+    (void)Key_StartAnyMappedTask();
 }
 
 static void FSM_Fault(void)
 {
-    /* K1 鐭寜: 娓呮晠闅?鈫?READY */
-    if (Key_ConsumeShort(KEY_IDX_K1)) {
-        menu.state = SYS_READY;
-        Key_FlushAll();
-        return;
-    }
-
-    /* K2 闀挎寜: 鍥?MENU */
     if (Key_ConsumeLong(KEY_IDX_K2)) {
         menu.state = SYS_MENU;
         Key_FlushAll();
-        return;
     }
 }
 
-/* ======================================================================== *
- *  KeyMenu_Scan 鈥?10ms 鍛ㄦ湡鍏ュ彛
- * ======================================================================== */
+static void KeyMenu_ShowWaiting(void)
+{
+    OLED_ShowLineString(1, 1, "waiting         ");
+    OLED_ShowLineString(2, 1, "                ");
+    OLED_ShowLineString(3, 1, "                ");
+    OLED_ShowLineString(4, 1, "                ");
+}
+
+static bool KeyMenu_ShouldRenderStoppedTaskOLED(const TaskDef *task)
+{
+    return (menu.state == SYS_STOPPED) &&
+           (task != NULL) &&
+           (task->id == TASK_T2) &&
+           (t2_finish_ticks_10ms != 0U);
+}
 
 void KeyMenu_Scan(void)
 {
-    /* ---- 璇诲彇 4 閿數骞?---- */
-    bool k1 = KEY_PRESSED(GPIOB, DL_GPIO_PIN_12);  /* PB12 */
-    bool k2 = KEY_PRESSED(GPIOB, DL_GPIO_PIN_13);  /* PB13 */
-    bool k3 = KEY_PRESSED(GPIOB, DL_GPIO_PIN_2);   /* PB2  */
-    bool k4 = KEY_PRESSED(GPIOB, DL_GPIO_PIN_3);   /* PB3  */
-
-    /* ---- 閫愪釜鎵弿 (RUNNING 鎬佽烦杩?K2, 鍥犱负 PB13 鏄?AD2) ---- */
-    Key_ScanOne(&menu.keys[KEY_IDX_K1], k1);
-    if (menu.state != SYS_RUNNING) {
-        Key_ScanOne(&menu.keys[KEY_IDX_K2], k2);
-    }
-    if (menu.state != SYS_RUNNING) {
-        Key_ScanOne(&menu.keys[KEY_IDX_K3], k3);
-        Key_ScanOne(&menu.keys[KEY_IDX_K4], k4);
+    for (uint8_t i = 0U; i < KEY_COUNT; i++) {
+        if (menu.state == SYS_RUNNING) {
+            if (!Key_ShouldScanWhileRunning(i)) {
+                Key_ClearOne(i);
+                continue;
+            }
+        }
+        Key_ScanOne(&menu.keys[i], Key_IsPressed(i));
     }
 
-    /* ---- 涓婄數璁℃椂 ---- */
     if (menu.boot_ticks < 0xFFFFU) {
         menu.boot_ticks++;
     }
@@ -531,53 +1016,63 @@ void KeyMenu_Scan(void)
         (t2_elapsed_ticks_10ms < 0xFFFFFFFFU)) {
         t2_elapsed_ticks_10ms++;
     }
+    if ((menu.state == SYS_RUNNING) &&
+        (menu.task_id == TASK_T4) &&
+        (t4_finish_ticks_10ms == 0U) &&
+        (t4_elapsed_ticks_10ms < 0xFFFFFFFFU)) {
+        t4_elapsed_ticks_10ms++;
+    }
+    if ((menu.state == SYS_RUNNING) &&
+        (menu.task_id == TASK_T5) &&
+        (t5_finish_ticks_10ms == 0U) &&
+        (t5_elapsed_ticks_10ms < 0xFFFFFFFFU)) {
+        t5_elapsed_ticks_10ms++;
+    }
+    if ((menu.state == SYS_RUNNING) &&
+        (menu.task_id == TASK_T6) &&
+        (t6_finish_ticks_10ms == 0U) &&
+        (t6_elapsed_ticks_10ms < 0xFFFFFFFFU)) {
+        t6_elapsed_ticks_10ms++;
+    }
 
-    /* ---- 鐘舵€佹満鍒嗗彂 ---- */
     switch (menu.state) {
         case SYS_MENU:    FSM_Menu();    break;
         case SYS_READY:   FSM_Ready();   break;
         case SYS_RUNNING: FSM_Running(); break;
         case SYS_STOPPED: FSM_Stopped(); break;
         case SYS_FAULT:   FSM_Fault();   break;
+        default:          menu.state = SYS_MENU; break;
     }
 }
-
-/* ======================================================================== *
- *  KeyMenu_OLED 鈥?鍒锋柊 OLED 4 琛岃彍鍗曚俊鎭?
- * ======================================================================== */
 
 void KeyMenu_OLED(void)
 {
     char buf[22];
-    uint32_t shown_ticks = (t2_finish_ticks_10ms != 0U) ?
-        t2_finish_ticks_10ms : t2_elapsed_ticks_10ms;
+    const TaskDef *task = KeyMenu_GetCurrentTask();
 
-    /* Line 1: 浠诲姟鍚?*/
-    if (menu.task_id >= TASK_ID_MIN && menu.task_id <= TASK_ID_MAX) {
-        snprintf(buf, sizeof(buf), "%-16d", (int)menu.task_id);
+    if ((menu.state != SYS_RUNNING) && !KeyMenu_ShouldRenderStoppedTaskOLED(task)) {
+        KeyMenu_ShowWaiting();
+        return;
+    }
+
+    if ((task != NULL) && (task->oled != NULL)) {
+        task->oled();
+        return;
+    }
+
+    if (task != NULL) {
+        snprintf(buf, sizeof(buf), "%-16s", task->name);
     } else {
         snprintf(buf, sizeof(buf), "?               ");
     }
     OLED_ShowLineString(1, 1, buf);
 
-    /* Line 2: 鐩爣鐐?*/
-    if (menu.task_id == TASK_T2) {
-        snprintf(buf, sizeof(buf), "t:%2lu.%02lus d:%3d",
-                 (unsigned long)(shown_ticks / 100U),
-                 (unsigned long)(shown_ticks % 100U),
-                 (int)g_Encoder.distance_cm);
-    } else {
-        snprintf(buf, sizeof(buf), "target: %4d mm", menu.target_mm);
-    }
+    snprintf(buf, sizeof(buf), "target: %4d mm", menu.target_mm);
     OLED_ShowLineString(2, 1, buf);
 
-    /* Line 3: 绯荤粺鐘舵€?*/
     OLED_ShowLineString(3, 1, state_names[menu.state]);
+    OLED_ShowLineString(4, 1, "");
 }
-
-/* ======================================================================== *
- *  鍏叡璁块棶鍣?
- * ======================================================================== */
 
 SysState KeyMenu_GetState(void)
 {
@@ -597,8 +1092,8 @@ int16_t KeyMenu_GetTargetMM(void)
 void KeyMenu_SetFault(void)
 {
     if (menu.state == SYS_RUNNING) {
-        const TaskDef *task = &task_table[menu.task_id];
-        if (task->stop) {
+        const TaskDef *task = KeyMenu_GetCurrentTask();
+        if (task && task->stop) {
             task->stop();
         }
         PB13_SetGPIO();

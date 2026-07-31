@@ -23,6 +23,7 @@ static volatile bool vision_line_ready;
 static char vision_line[VISION_RX_BUF_SIZE];
 static VisionBallData latest_ball;
 static bool vision_frame_received;
+static volatile VisionUartStats vision_stats;
 
 static bool parse_u16_field(const char *text, uint16_t *out)
 {
@@ -253,6 +254,8 @@ VisionParseResult VisionProtocol_ParseLine(const char *line,
 
 static void handle_rx_byte(uint8_t byte)
 {
+    vision_stats.rx_bytes++;
+
     if (vision_line_ready) {
         return;
     }
@@ -269,6 +272,7 @@ static void handle_rx_byte(uint8_t byte)
         vision_rx_buf[vision_rx_len++] = (char)byte;
     } else {
         vision_rx_len = 0U;
+        vision_stats.rx_overflow++;
     }
 }
 
@@ -279,6 +283,7 @@ void VisionUart_Init(void)
     vision_rx_len = 0U;
     vision_line_ready = false;
     vision_frame_received = false;
+    memset((void *)&vision_stats, 0, sizeof(vision_stats));
 
 #ifndef HOST_TEST
     NVIC_EnableIRQ(VISION_UART_INST_INT_IRQN);
@@ -303,10 +308,17 @@ void VisionUart_Poll(uint32_t now_tick_10ms)
         NVIC_EnableIRQ(VISION_UART_INST_INT_IRQN);
 #endif
 
-        if (VisionProtocol_ParseLine(vision_line, &parsed, now_tick_10ms) ==
-            VISION_PARSE_OK) {
+        VisionParseResult parse_result =
+            VisionProtocol_ParseLine(vision_line, &parsed, now_tick_10ms);
+        vision_stats.rx_lines++;
+        if (parse_result == VISION_PARSE_OK) {
+            vision_stats.parse_ok++;
             latest_ball = parsed;
             vision_frame_received = true;
+        } else if (parse_result == VISION_PARSE_UNKNOWN) {
+            vision_stats.parse_unknown++;
+        } else if (parse_result == VISION_PARSE_BAD_VALUE) {
+            vision_stats.parse_bad_value++;
         }
     }
 
@@ -330,6 +342,11 @@ void VisionUart_Poll(uint32_t now_tick_10ms)
 VisionBallData VisionUart_GetLatest(void)
 {
     return latest_ball;
+}
+
+VisionUartStats VisionUart_GetStats(void)
+{
+    return vision_stats;
 }
 
 #ifdef HOST_TEST

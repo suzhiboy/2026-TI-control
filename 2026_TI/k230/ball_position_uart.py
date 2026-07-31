@@ -102,6 +102,7 @@ ROD_CENTER_PX = (
 ROD_LEFT_MM = -120
 ROD_CENTER_MM = 0
 ROD_RIGHT_MM = 120
+ROD_MM_OFFSET = 5  # Add this after projection. If center reads -5mm, use +5.
 ROD_DX = float(ROD_RIGHT_PX[0] - ROD_LEFT_PX[0])
 ROD_DY = float(ROD_RIGHT_PX[1] - ROD_LEFT_PX[1])
 ROD_LEN2 = ROD_DX * ROD_DX + ROD_DY * ROD_DY
@@ -252,7 +253,7 @@ def quality_from_conf(conf):
 
 
 def linear_mm_from_t(t):
-    return float(ROD_LEFT_MM) + float(t) * float(ROD_MM_RANGE)
+    return float(ROD_LEFT_MM) + float(t) * float(ROD_MM_RANGE) + float(ROD_MM_OFFSET)
 
 
 def calibrated_mm_from_t(t):
@@ -269,7 +270,7 @@ def calibrated_mm_from_t(t):
     center_delta = float(ROD_CENTER_MM - ROD_LEFT_MM)
     a = (center_delta - right_delta * center_t) / denom
     b = right_delta - a
-    return float(ROD_LEFT_MM) + a * t * t + b * t
+    return float(ROD_LEFT_MM) + a * t * t + b * t + float(ROD_MM_OFFSET)
 
 
 def rod_endpoint_margin_t():
@@ -1799,13 +1800,14 @@ def main():
             )
         )
         print(
-            "K230_CAL left_px={} center_px={} right_px={} mm=[{},{},{}] max_perp_px={} endpoint_margin={} max_jump_mm={} init_confirm={} init_spread={} allow_jump_relock={} reinit_lost={} jump_confirm={} jump_spread={}".format(
+            "K230_CAL left_px={} center_px={} right_px={} mm=[{},{},{}] offset_mm={} max_perp_px={} endpoint_margin={} max_jump_mm={} init_confirm={} init_spread={} allow_jump_relock={} reinit_lost={} jump_confirm={} jump_spread={}".format(
                 ROD_LEFT_PX,
                 ROD_CENTER_PX,
                 ROD_RIGHT_PX,
                 ROD_LEFT_MM,
                 ROD_CENTER_MM,
                 ROD_RIGHT_MM,
+                ROD_MM_OFFSET,
                 ROD_MAX_PERP_PX,
                 ROD_ENDPOINT_MARGIN_PX,
                 MAX_JUMP_MM,

@@ -7,6 +7,9 @@
 
 u8 OLED_GRAM[144][8];
 extern void delay_ms(uint32_t ms);
+static u8 oled_refresh_page = 8U;
+static u8 oled_refresh_column = 0U;
+static bool oled_refresh_requested = false;
 
 //反显函数
 void OLED_ColorTurn(u8 i)
@@ -368,4 +371,42 @@ void OLED_Init(void)
 	OLED_WriteCommand(0x14);
 	OLED_WriteCommand(0xAF); // 开启显示
 	OLED_Clear();
+}
+
+void OLED_RequestRefresh(void)
+{
+    oled_refresh_requested = true;
+}
+
+void OLED_RefreshStep(void)
+{
+    u8 count;
+
+    if (oled_refresh_page >= 8U) {
+        if (!oled_refresh_requested) {
+            return;
+        }
+        oled_refresh_requested = false;
+        oled_refresh_page = 0U;
+        oled_refresh_column = 0U;
+    }
+
+    if (oled_refresh_column == 0U) {
+        OLED_WR_Byte((u8)(0xb0U + oled_refresh_page), OLED_CMD);
+        OLED_WR_Byte(0x00U, OLED_CMD);
+        OLED_WR_Byte(0x10U, OLED_CMD);
+    }
+
+    for (count = 0U;
+         (count < 4U) && (oled_refresh_column < 128U);
+         count++) {
+        OLED_WR_Byte(OLED_GRAM[oled_refresh_column][oled_refresh_page],
+                     OLED_DATA);
+        oled_refresh_column++;
+    }
+
+    if (oled_refresh_column >= 128U) {
+        oled_refresh_page++;
+        oled_refresh_column = 0U;
+    }
 }

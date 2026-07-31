@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "balance_control.h"
 #include "sys_state.h"
@@ -11,6 +12,24 @@ static int line_stop_count;
 static float last_reference_cm;
 static bool balance_enabled;
 static int balance_reset_count;
+static uint16_t last_negative_limit;
+static uint16_t last_positive_limit;
+static uint16_t last_minimum_drive;
+static bool last_override_enabled;
+static uint16_t last_override_pulse;
+static float last_pos_kp;
+static float last_pos_kd;
+static float last_vel_kp;
+static uint16_t next_vision_seq;
+static char oled_lines[4][22];
+
+void OLED_ShowLineString(uint8_t line, uint8_t column, const char *str)
+{
+    (void)column;
+    if ((line >= 1U) && (line <= 4U)) {
+        snprintf(oled_lines[line - 1U], sizeof(oled_lines[0]), "%s", str);
+    }
+}
 
 void LineTrack_Stop(void)
 {
@@ -25,7 +44,10 @@ void BalanceControl_SetReference(BalanceControl_t *bc, float x_ref_cm)
 
 void BalanceControl_Reset(BalanceControl_t *bc)
 {
-    (void)bc;
+    if (bc != NULL) {
+        bc->pwm_neutral = (float)BC_PWM_CENTER_US;
+        bc->pwm_pulse = BC_PWM_CENTER_US;
+    }
     balance_reset_count++;
 }
 
@@ -33,6 +55,38 @@ void BalanceControl_Enable(BalanceControl_t *bc, bool en)
 {
     (void)bc;
     balance_enabled = en;
+}
+
+void BalanceControl_SetOutputProfile(BalanceControl_t *bc,
+                                     uint16_t negative_limit_us,
+                                     uint16_t positive_limit_us,
+                                     uint16_t minimum_drive_us)
+{
+    (void)bc;
+    last_negative_limit = negative_limit_us;
+    last_positive_limit = positive_limit_us;
+    last_minimum_drive = minimum_drive_us;
+}
+
+void BalanceControl_SetPositionPD(BalanceControl_t *bc, float kp, float kd)
+{
+    (void)bc;
+    last_pos_kp = kp;
+    last_pos_kd = kd;
+}
+
+void BalanceControl_SetVelocityP(BalanceControl_t *bc, float kp)
+{
+    (void)bc;
+    last_vel_kp = kp;
+}
+
+void BalanceControl_SetPwmOverride(BalanceControl_t *bc, bool enabled,
+                                   uint16_t pulse_us)
+{
+    (void)bc;
+    last_override_enabled = enabled;
+    last_override_pulse = pulse_us;
 }
 
 static void expect_int(const char *name, int expected, int actual)
@@ -47,6 +101,15 @@ static void expect_bool(const char *name, bool expected, bool actual)
 {
     if (expected != actual) {
         fprintf(stderr, "FAIL %s: expected %d got %d\n", name, expected, actual);
+        failures++;
+    }
+}
+
+static void expect_str(const char *name, const char *expected, const char *actual)
+{
+    if (strcmp(expected, actual) != 0) {
+        fprintf(stderr, "FAIL %s: expected '%s' got '%s'\n",
+                name, expected, actual);
         failures++;
     }
 }
@@ -71,12 +134,72 @@ static void expect_float100(const char *name, int expected_hundredths, float act
     }
 }
 
+static int expected_freeze_return_pulse(uint16_t start_pulse,
+                                        uint16_t target_pulse,
+                                        uint32_t elapsed_ticks)
+{
+    int32_t delta;
+    int32_t numerator;
+
+    if (elapsed_ticks >= T3_FREEZE_RETURN_TICKS) {
+        return (int)target_pulse;
+    }
+
+    delta = (int32_t)target_pulse - (int32_t)start_pulse;
+    numerator = delta * (int32_t)elapsed_ticks;
+    if (numerator >= 0) {
+        delta = (numerator + (int32_t)(T3_FREEZE_RETURN_TICKS / 2U)) /
+            (int32_t)T3_FREEZE_RETURN_TICKS;
+    } else {
+        delta = (numerator - (int32_t)(T3_FREEZE_RETURN_TICKS / 2U)) /
+            (int32_t)T3_FREEZE_RETURN_TICKS;
+    }
+
+    return (int)((int32_t)start_pulse + delta);
+}
+
+static uint16_t expected_final_hold_pulse(uint16_t start_pulse)
+{
+    int32_t neutral = (int32_t)BC_PWM_CENTER_US;
+    int32_t delta = (int32_t)start_pulse - neutral;
+    int32_t hold_delta;
+
+    if (T3_FREEZE_HOLD_BIAS_PERCENT >= 100U) {
+        return start_pulse;
+    }
+
+    hold_delta = (delta * (int32_t)T3_FREEZE_HOLD_BIAS_PERCENT) / 100;
+    if (delta > 0) {
+        if (hold_delta < (int32_t)T3_FREEZE_HOLD_MIN_DELTA_US) {
+            hold_delta = (int32_t)T3_FREEZE_HOLD_MIN_DELTA_US;
+        }
+    } else if (delta < 0) {
+        if (hold_delta > -(int32_t)T3_FREEZE_HOLD_MIN_DELTA_US) {
+            hold_delta = -(int32_t)T3_FREEZE_HOLD_MIN_DELTA_US;
+        }
+    } else {
+        hold_delta = (int32_t)T3_FREEZE_HOLD_MIN_DELTA_US;
+    }
+
+    return (uint16_t)(neutral + hold_delta);
+}
+
 static void reset_fakes(void)
 {
     line_stop_count = 0;
     last_reference_cm = 0.0f;
     balance_enabled = false;
     balance_reset_count = 0;
+    last_negative_limit = 0U;
+    last_positive_limit = 0U;
+    last_minimum_drive = 0U;
+    last_override_enabled = false;
+    last_override_pulse = 0U;
+    last_pos_kp = 0.0f;
+    last_pos_kd = 0.0f;
+    last_vel_kp = 0.0f;
+    next_vision_seq = 0U;
+    memset(oled_lines, 0, sizeof(oled_lines));
     ControlState_Set(CONTROL_IDLE);
 }
 
@@ -94,11 +217,17 @@ static void test_start_targets_positive_5cm(void)
     expect_int("control state after start", CONTROL_STATIC_BALL, ControlState_Get());
     expect_bool("balance enabled after start", true, balance_enabled);
     expect_int("balance reset on start", 1, balance_reset_count);
-    expect_float10("reference after start", 0, last_reference_cm);
+    expect_float10("reference after start", 50, last_reference_cm);
+    expect_int("start negative output limit", T3_TRAVEL_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+    expect_int("start positive output limit", T3_TRAVEL_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+    expect_int("start minimum drive", T3_TRAVEL_MIN_DRIVE_US,
+               last_minimum_drive);
     expect_bool("line stopped on start", true, line_stop_count > 0);
 }
 
-static void test_reference_ramps_toward_positive_target(void)
+static void test_reference_stays_at_positive_target(void)
 {
     BalanceControl_t controller;
 
@@ -106,18 +235,37 @@ static void test_reference_ramps_toward_positive_target(void)
     T3Task_AttachController(&controller);
     T3Task_Start();
 
-    T3Task_UpdateVision(true, 0);
+    T3Task_UpdateVision(true, false, ++next_vision_seq, 0);
     T3Task_Run();
-    expect_float100("reference after one tick", 4, last_reference_cm);
+    expect_float100("reference after one tick", 500, last_reference_cm);
 
     T3Task_Run();
-    expect_float100("reference after two ticks", 8, last_reference_cm);
+    expect_float100("reference after two ticks", 500, last_reference_cm);
 }
 
-static void run_inside_target(uint8_t count, int16_t x_mm)
+static void run_inside_target(uint16_t count, int16_t x_mm)
 {
-    for (uint8_t i = 0U; i < count; i++) {
-        T3Task_UpdateVision(true, x_mm);
+    for (uint16_t i = 0U; i < count; i++) {
+        T3Task_UpdateVision(true, false, ++next_vision_seq, x_mm);
+        T3Task_Run();
+    }
+}
+
+static void run_timed_control_ticks(uint16_t count, int16_t x_mm)
+{
+    for (uint16_t i = 1U; i <= count; i++) {
+        T3Task_Tick10ms();
+        if ((i % 4U) == 0U) {
+            T3Task_UpdateVision(true, false, ++next_vision_seq, x_mm);
+        }
+        T3Task_Run();
+    }
+}
+
+static void run_stale_control_ticks(uint16_t count)
+{
+    for (uint16_t i = 0U; i < count; i++) {
+        T3Task_Tick10ms();
         T3Task_Run();
     }
 }
@@ -130,15 +278,31 @@ static void test_positive_arrival_switches_to_negative_after_confirm_ticks(void)
     T3Task_AttachController(&controller);
     T3Task_Start();
 
-    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), 50);
+    T3Task_UpdateVision(true, false, ++next_vision_seq, 40);
+    T3Task_Run();
     expect_int("phase before confirm", T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
     expect_int("target before confirm", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
 
-    run_inside_target(1U, 50);
+    for (uint8_t i = 0U; i < 5U; i++) {
+        T3Task_Tick10ms();
+        T3Task_UpdateVision(true, false, next_vision_seq, 40);
+        T3Task_Run();
+    }
+    expect_int("duplicate frame cannot confirm positive arrival",
+               T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq, 40);
+    T3Task_Run();
     expect_int("phase after positive arrival", T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
     expect_int("target after positive arrival", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
-    T3Task_Run();
-    expect_float100("reference starts ramping negative", 4, last_reference_cm);
+    expect_float100("reference switches negative immediately", -500,
+                    last_reference_cm);
+    expect_int("negative return uses reduced positive output limit",
+               T3_RETURN_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+    expect_int("negative return uses reduced minimum drive",
+               T3_RETURN_MIN_DRIVE_US,
+               last_minimum_drive);
 }
 
 static void test_positive_overshoot_switches_to_negative_after_confirm_ticks(void)
@@ -169,16 +333,16 @@ static void test_invalid_vision_resets_arrival_confirmation(void)
     T3Task_Start();
 
     run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), 49);
-    T3Task_UpdateVision(false, 49);
+    T3Task_UpdateVision(false, false, next_vision_seq, 49);
     T3Task_Run();
-    T3Task_UpdateVision(true, 49);
+    T3Task_UpdateVision(true, false, ++next_vision_seq, 49);
     T3Task_Run();
 
     expect_int("phase after invalid reset", T3_PHASE_TO_POSITIVE, T3Task_GetPhase());
     expect_int("target after invalid reset", T3_POSITIVE_TARGET_MM, T3Task_GetTargetMM());
 }
 
-static void test_negative_overshoot_enters_hold_after_confirm_ticks(void)
+static void test_negative_overshoot_does_not_count_as_stable(void)
 {
     BalanceControl_t controller;
 
@@ -187,18 +351,14 @@ static void test_negative_overshoot_enters_hold_after_confirm_ticks(void)
     T3Task_Start();
 
     run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
-    run_inside_target((uint8_t)(T3_ARRIVAL_CONFIRM_TICKS - 1U), -120);
-    expect_int("phase before negative overshoot confirm", T3_PHASE_TO_NEGATIVE,
-               T3Task_GetPhase());
-
-    run_inside_target(1U, -120);
-    expect_int("phase after negative overshoot", T3_PHASE_HOLD_NEGATIVE,
+    run_inside_target(T3_FINAL_STABLE_TICKS, -120);
+    expect_int("phase after negative overshoot", T3_PHASE_TO_NEGATIVE,
                T3Task_GetPhase());
     expect_int("target while holding after overshoot", T3_NEGATIVE_TARGET_MM,
                T3Task_GetTargetMM());
 }
 
-static void test_negative_arrival_enters_hold(void)
+static void test_negative_entry_keeps_closed_loop_enabled(void)
 {
     BalanceControl_t controller;
 
@@ -207,11 +367,368 @@ static void test_negative_arrival_enters_hold(void)
     T3Task_Start();
 
     run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
-    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, -50);
+    run_inside_target(1U, (int16_t)(T3_NEGATIVE_CAPTURE_ENTRY_MM + 1));
 
-    expect_int("phase after negative arrival", T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("phase remains closed loop before capture entry",
+               T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+    expect_bool("negative travel pwm override disabled", false,
+                last_override_enabled);
+    expect_int("negative return keeps return negative output limit",
+               T3_RETURN_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+    expect_int("negative return keeps return positive output limit",
+               T3_RETURN_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+    expect_int("negative return keeps return minimum drive",
+               T3_RETURN_MIN_DRIVE_US,
+               last_minimum_drive);
+}
+
+static void test_negative_capture_profile_engages_before_target(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    T3Task_UpdateVision(true, false, ++next_vision_seq,
+                        (int16_t)(T3_NEGATIVE_CAPTURE_ENTRY_MM + 1));
+    T3Task_Run();
+
+    expect_int("capture not active before entry",
+               T3_RETURN_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq,
+                        T3_NEGATIVE_CAPTURE_ENTRY_MM);
+    T3Task_Run();
+
+    expect_int("capture negative output limit",
+               T3_CAPTURE_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+    expect_int("capture positive output limit",
+               T3_CAPTURE_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+    expect_int("capture disables minimum drive",
+               T3_CAPTURE_MIN_DRIVE_US,
+               last_minimum_drive);
+    expect_float100("capture position kp", 6, last_pos_kp);
+    expect_float100("capture position kd", 6, last_pos_kd);
+    expect_float100("capture velocity kp", 3, last_vel_kp);
+    expect_bool("capture keeps closed loop pwm override disabled", false,
+                last_override_enabled);
+}
+
+static void test_final_window_uses_low_output_hold_profile(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    T3Task_UpdateVision(true, false, ++next_vision_seq,
+                        T3_NEGATIVE_CAPTURE_ENTRY_MM);
+    T3Task_Run();
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq, -50);
+    T3Task_Run();
+
+    expect_int("final window negative output limit",
+               T3_FINAL_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+    expect_int("final window positive output limit",
+               T3_FINAL_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+    expect_int("final window disables minimum drive",
+               T3_FINAL_MIN_DRIVE_US,
+               last_minimum_drive);
+    expect_float100("final window position kp", 5, last_pos_kp);
+    expect_float100("final window position kd", 5, last_pos_kd);
+    expect_float100("final window velocity kp", 2, last_vel_kp);
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq, -70);
+    T3Task_Run();
+
+    expect_int("leaving final window restores capture negative limit",
+               T3_CAPTURE_NEGATIVE_DELTA_LIMIT_US,
+               last_negative_limit);
+    expect_int("leaving final window restores capture positive limit",
+               T3_CAPTURE_POSITIVE_DELTA_LIMIT_US,
+               last_positive_limit);
+}
+
+static void test_final_same_coordinate_freezes_after_configured_fresh_frames(void)
+{
+    BalanceControl_t controller;
+    uint16_t return_start_pulse;
+    uint16_t hold_pulse;
+    uint32_t return_start_ticks;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+
+    for (uint8_t i = 0U; i < T3_STILL_FRAME_FREEZE_COUNT; i++) {
+        controller.pwm_pulse = (uint16_t)(BC_PWM_CENTER_US + 10U + i);
+        T3Task_UpdateVision(true, false, ++next_vision_seq,
+                            (int16_t)(T3_NEGATIVE_TARGET_MM +
+                                      T3_TARGET_TOLERANCE_MM));
+        T3Task_Run();
+    }
+    expect_bool("same coordinate at tolerance edge cannot freeze pwm",
+                false, last_override_enabled);
+    expect_int("same coordinate at tolerance edge cannot stop oled timer",
+               T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+
+    for (uint8_t i = 0U; i < (uint8_t)(T3_STILL_FRAME_FREEZE_COUNT - 1U); i++) {
+        controller.pwm_pulse = (uint16_t)(BC_PWM_CENTER_US + 24U + i);
+        T3Task_UpdateVision(true, false, ++next_vision_seq,
+                            (int16_t)(T3_NEGATIVE_TARGET_MM +
+                                      T3_FREEZE_TOLERANCE_MM));
+        T3Task_Run();
+        expect_bool("same coordinate does not freeze before configured count",
+                    false, last_override_enabled);
+        expect_int("same coordinate does not stop timer before configured count",
+                   T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+    }
+
+    controller.pwm_pulse = (uint16_t)(BC_PWM_CENTER_US + 31U);
+    T3Task_UpdateVision(true, false, ++next_vision_seq,
+                        (int16_t)(T3_NEGATIVE_TARGET_MM +
+                                  T3_FREEZE_TOLERANCE_MM));
+    T3Task_Run();
+
+    expect_bool("same coordinate configured fresh frame freezes pwm",
+                true, last_override_enabled);
+    expect_int("same coordinate freeze starts return from current pulse",
+               (int)(BC_PWM_CENTER_US + 31U), (int)last_override_pulse);
+    expect_int("same coordinate freeze enters return before hold",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+    return_start_pulse = last_override_pulse;
+    hold_pulse = expected_final_hold_pulse(return_start_pulse);
+    return_start_ticks = T3Task_GetElapsedTicks10ms();
+
+    for (uint8_t i = 0U; i < (uint8_t)(T3_FREEZE_RETURN_TICKS / 2U); i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("freeze return keeps oled timer running",
+               (int)(return_start_ticks + (T3_FREEZE_RETURN_TICKS / 2U)),
+               (int)T3Task_GetElapsedTicks10ms());
+    expect_bool("freeze return keeps pwm override active",
+                true, last_override_enabled);
+    expect_int("freeze return slews toward final hold bias",
+               expected_freeze_return_pulse(return_start_pulse, hold_pulse,
+                                            T3_FREEZE_RETURN_TICKS / 2U),
+               (int)last_override_pulse);
+    expect_int("freeze return still before hold",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+
+    for (uint8_t i = (uint8_t)(T3_FREEZE_RETURN_TICKS / 2U);
+         i < T3_FREEZE_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("freeze return completes into hold",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("freeze return holds biased pulse",
+               (int)hold_pulse, (int)last_override_pulse);
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq, -70);
+    T3Task_Run();
+
+    expect_bool("hold keeps center pwm frozen after leaving final window",
+                true, last_override_enabled);
+    expect_int("hold remains biased after later coordinate changes",
+               (int)hold_pulse, (int)last_override_pulse);
+}
+
+static void test_final_hold_keeps_minimum_bias_when_freeze_pwm_is_near_center(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+
+    for (uint8_t i = 0U; i < T3_STILL_FRAME_FREEZE_COUNT; i++) {
+        controller.pwm_pulse = (uint16_t)(BC_PWM_CENTER_US + 5U);
+        T3Task_UpdateVision(true, false, ++next_vision_seq,
+                            (int16_t)(T3_NEGATIVE_TARGET_MM +
+                                      T3_FREEZE_TOLERANCE_MM));
+        T3Task_Run();
+    }
+
+    expect_int("near-center freeze enters return",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+
+    for (uint8_t i = 0U; i < T3_FREEZE_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("near-center freeze completes hold",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("near-center freeze keeps minimum hold bias",
+               (int)(BC_PWM_CENTER_US + T3_FREEZE_HOLD_MIN_DELTA_US),
+               (int)last_override_pulse);
+}
+
+static void test_same_coordinate_starts_return_without_stability_timer(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target(T3_FINAL_STABLE_TICKS, -50);
+
+    expect_int("same fresh coordinate frames start return without stability timer",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+    expect_bool("same fresh coordinate frames start pwm override",
+                true, last_override_enabled);
+}
+
+static void test_stale_vision_cannot_complete_final_stability(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target(1U, -50);
+    run_stale_control_ticks(T3_VISION_FRESH_TICKS);
+
+    expect_int("stale final sample cannot complete stability",
+               T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+}
+
+static void test_final_stability_requires_continuous_samples(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target(1U, -50);
+    run_timed_control_ticks((uint16_t)(T3_FINAL_STABLE_TICKS / 2U), -50);
+    run_inside_target(1U, -61);
+    run_inside_target(1U, -50);
+    run_timed_control_ticks((uint16_t)(T3_FINAL_STABLE_TICKS - 1U), -50);
+    expect_int("phase before final stability duration", T3_PHASE_TO_NEGATIVE,
+               T3Task_GetPhase());
+
+    run_timed_control_ticks(1U, -50);
+    expect_int("phase waits for pwm freeze after stability duration",
+               T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+
+    run_inside_target(T3_STILL_FRAME_FREEZE_COUNT, -50);
+
+    expect_int("phase after continuous final stability starts return",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+    for (uint8_t i = 0U; i < T3_FREEZE_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+    expect_int("phase after freeze return completes",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
     expect_int("target while holding", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
-    expect_bool("reference still bounded while holding", true, last_reference_cm <= 5.0f);
+    expect_float100("negative reference remains active while holding", -500,
+                    last_reference_cm);
+    expect_bool("same coordinate hold can freeze pwm", true,
+                last_override_enabled);
+}
+
+static void test_hold_keeps_negative_reference_after_new_samples(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+    run_inside_target(1U, -50);
+    run_timed_control_ticks(T3_FINAL_STABLE_TICKS, -50);
+    expect_int("hold waits for pwm freeze", T3_PHASE_TO_NEGATIVE,
+               T3Task_GetPhase());
+    run_inside_target(T3_STILL_FRAME_FREEZE_COUNT, -50);
+    for (uint8_t i = 0U; i < T3_FREEZE_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+    run_inside_target(1U, -62);
+
+    expect_int("hold phase remains complete", T3_PHASE_HOLD_NEGATIVE,
+               T3Task_GetPhase());
+    expect_float100("hold target remains negative", -500, last_reference_cm);
+    expect_bool("hold keeps pwm frozen", true, last_override_enabled);
+}
+
+static void test_elapsed_time_stops_after_freeze_return_completes(void)
+{
+    BalanceControl_t controller;
+    uint32_t return_start_ticks;
+    uint32_t completed_ticks;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+    T3Task_Tick10ms();
+    run_inside_target(T3_ARRIVAL_CONFIRM_TICKS, 50);
+
+    for (uint8_t i = 0U; i < (uint8_t)(T3_STILL_FRAME_FREEZE_COUNT - 1U); i++) {
+        T3Task_Tick10ms();
+        T3Task_UpdateVision(true, false, ++next_vision_seq, -50);
+        T3Task_Run();
+        expect_int("elapsed keeps running before same-coordinate freeze",
+                   T3_PHASE_TO_NEGATIVE, T3Task_GetPhase());
+    }
+
+    T3Task_Tick10ms();
+    T3Task_UpdateVision(true, false, ++next_vision_seq, -50);
+    T3Task_Run();
+    expect_int("same-coordinate freeze enters return",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+    return_start_ticks = T3Task_GetElapsedTicks10ms();
+
+    for (uint8_t i = 0U; i < (uint8_t)(T3_FREEZE_RETURN_TICKS - 1U); i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+        expect_int("elapsed keeps running during freeze return",
+                   T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+    }
+
+    T3Task_Tick10ms();
+    T3Task_Run();
+    expect_int("freeze return completion enters hold",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    completed_ticks = T3Task_GetElapsedTicks10ms();
+    expect_int("elapsed includes freeze return",
+               (int)(return_start_ticks + T3_FREEZE_RETURN_TICKS),
+               (int)completed_ticks);
+
+    T3Task_Tick10ms();
+
+    expect_int("elapsed time freezes after final stability",
+               (int)completed_ticks,
+               (int)T3Task_GetElapsedTicks10ms());
 }
 
 static void test_stop_returns_idle_and_disables_balance(void)
@@ -230,18 +747,77 @@ static void test_stop_returns_idle_and_disables_balance(void)
     expect_int("balance reset on stop", 2, balance_reset_count);
 }
 
+static void test_elapsed_time_counts_from_start(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+    expect_int("elapsed ticks reset on start", 0,
+               (int)T3Task_GetElapsedTicks10ms());
+
+    for (int i = 0; i < 123; i++) {
+        T3Task_Tick10ms();
+    }
+    expect_int("elapsed ticks count while active", 123,
+               (int)T3Task_GetElapsedTicks10ms());
+
+    T3Task_Stop();
+    T3Task_Tick10ms();
+    expect_int("elapsed ticks stop with task", 123,
+               (int)T3Task_GetElapsedTicks10ms());
+}
+
+static void test_oled_shows_t_x_p_s_and_link_state(void)
+{
+    BalanceControl_t controller;
+
+    reset_fakes();
+    T3Task_AttachController(&controller);
+    T3Task_Start();
+    controller.pwm_pulse = (uint16_t)(BC_PWM_CENTER_US - 350U);
+
+    T3Task_UpdateVision(true, false, ++next_vision_seq, -100);
+    T3Task_OLED();
+    expect_str("OLED title", "T3 Ball Static  ", oled_lines[0]);
+    expect_str("OLED position and pwm", "X-100 P-350     ", oled_lines[1]);
+    expect_str("OLED target and sequence", "T+050 S0001     ", oled_lines[2]);
+    expect_str("OLED elapsed time", "00.00s POS      ", oled_lines[3]);
+
+    T3Task_UpdateVision(false, true, next_vision_seq, -100);
+    T3Task_OLED();
+    expect_str("OLED timeout position", "X---- P-350     ", oled_lines[1]);
+    expect_str("OLED timeout state", "00.00s TIMEOUT  ", oled_lines[3]);
+
+    T3Task_UpdateVision(false, false, next_vision_seq, -100);
+    T3Task_OLED();
+    expect_str("OLED live lost ball", "00.00s LOST     ", oled_lines[3]);
+}
+
 int main(void)
 {
     failures = 0;
 
     test_start_targets_positive_5cm();
-    test_reference_ramps_toward_positive_target();
+    test_reference_stays_at_positive_target();
     test_positive_arrival_switches_to_negative_after_confirm_ticks();
     test_positive_overshoot_switches_to_negative_after_confirm_ticks();
     test_invalid_vision_resets_arrival_confirmation();
-    test_negative_overshoot_enters_hold_after_confirm_ticks();
-    test_negative_arrival_enters_hold();
+    test_negative_overshoot_does_not_count_as_stable();
+    test_negative_entry_keeps_closed_loop_enabled();
+    test_negative_capture_profile_engages_before_target();
+    test_final_window_uses_low_output_hold_profile();
+    test_final_same_coordinate_freezes_after_configured_fresh_frames();
+    test_final_hold_keeps_minimum_bias_when_freeze_pwm_is_near_center();
+    test_same_coordinate_starts_return_without_stability_timer();
+    test_stale_vision_cannot_complete_final_stability();
+    test_final_stability_requires_continuous_samples();
+    test_hold_keeps_negative_reference_after_new_samples();
+    test_elapsed_time_stops_after_freeze_return_completes();
     test_stop_returns_idle_and_disables_balance();
+    test_elapsed_time_counts_from_start();
+    test_oled_shows_t_x_p_s_and_link_state();
 
     if (failures != 0) {
         return EXIT_FAILURE;

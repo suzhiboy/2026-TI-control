@@ -42,18 +42,44 @@
 #include "sys_state.h"
 #include "key_menu.h"
 #include "t3_task.h"
-#include <stdio.h>
 
-#ifndef APP_AUTO_START_T3
-#define APP_AUTO_START_T3  1
+#ifndef APP_AUTO_START_TASK
+#define APP_AUTO_START_TASK  TASK_T2
 #endif
+
+#define APP_OLED_PERIOD_TICKS      (25U)
+#define T4_CAR_ACCEL_FF_GAIN       (1.0f)
+#define T4_CAR_ACCEL_FF_LIMIT_MS2  (0.85f)
+#define T4_CAR_ACCEL_HOLD_MS2      (2.5f)
+#define T4_CAR_ACCEL_START_HOLD_TICKS (150U)
+#define T4_CAR_ACCEL_STOP_HOLD_TICKS  (210U)
+#define T4_CAR_ACCEL_EDGE_DEADBAND_MS2 (0.05f)
+#define T5_CAR_ACCEL_FF_GAIN       (2.0f)
+#define T5_CAR_ACCEL_FF_SIGN       (1.0f)
+#define T5_CAR_ACCEL_FF_LIMIT_MS2  (1.20f)
+#define T5_CAR_ACCEL_HOLD_MS2      (1.10f)
+#define T5_CAR_ACCEL_START_HOLD_TICKS (180U)
+#define T5_CAR_ACCEL_STOP_HOLD_TICKS  (240U)
+#define T5_CAR_ACCEL_EDGE_DEADBAND_MS2 (0.04f)
+#define T5_CURVE_ACCEL_FF_GAIN     (0.06f)
+#define T5_CURVE_ACCEL_FF_LIMIT_MS2 (0.45f)
 
 static volatile uint32_t control_ticks_10ms = 0;
 static BalanceControl_t bc;
 static volatile VisionBallData g_vision_ball = {0};
 static bool g_pd42s1_pwm_running = false;
+static uint16_t last_vision_seq = 0U;
+static uint32_t last_vision_tick = 0U;
+static bool has_vision_seq = false;
+static bool t4_ff_session_active = false;
+static uint16_t t4_start_hold_ticks = 0U;
+static uint16_t t4_stop_hold_ticks = 0U;
+static float t4_prev_line_accel_ms2 = 0.0f;
+static bool t5_ff_session_active = false;
+static uint16_t t5_start_hold_ticks = 0U;
+static uint16_t t5_stop_hold_ticks = 0U;
+static float t5_prev_line_accel_ms2 = 0.0f;
 static MT6701_Data mt6701;
-static MT6701_Status mt6701_status = MT6701_ERR_TIMEOUT;
 
 static uint16_t slew_u16_toward(uint16_t current, uint16_t target, uint16_t step)
 {
@@ -68,6 +94,124 @@ static uint16_t slew_u16_toward(uint16_t current, uint16_t target, uint16_t step
     }
 
     return current;
+}
+
+static float clamp_float(float value, float min_value, float max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void T4_ResetCarAccelFeedforward(void)
+{
+    t4_ff_session_active = false;
+    t4_start_hold_ticks = 0U;
+    t4_stop_hold_ticks = 0U;
+    t4_prev_line_accel_ms2 = 0.0f;
+}
+
+static float T4_BuildCarAccelFeedforward(void)
+{
+    float line_accel_ms2 = LineTrack_GetLongitudinalAccelMS2();
+    float accel_ms2;
+
+    if (KeyMenu_GetTaskID() != TASK_T4) {
+        T4_ResetCarAccelFeedforward();
+        return 0.0f;
+    }
+
+    if (!t4_ff_session_active) {
+        t4_ff_session_active = true;
+        t4_start_hold_ticks = T4_CAR_ACCEL_START_HOLD_TICKS;
+        t4_stop_hold_ticks = 0U;
+        t4_prev_line_accel_ms2 = 0.0f;
+    }
+
+    if ((line_accel_ms2 > T4_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
+        (t4_prev_line_accel_ms2 <= T4_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
+        t4_start_hold_ticks = T4_CAR_ACCEL_START_HOLD_TICKS;
+    }
+    if ((line_accel_ms2 < -T4_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
+        (t4_prev_line_accel_ms2 >= -T4_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
+        t4_stop_hold_ticks = T4_CAR_ACCEL_STOP_HOLD_TICKS;
+    }
+
+    t4_prev_line_accel_ms2 = line_accel_ms2;
+
+    accel_ms2 = line_accel_ms2 * T4_CAR_ACCEL_FF_GAIN;
+    if (t4_start_hold_ticks > 0U) {
+        accel_ms2 += T4_CAR_ACCEL_HOLD_MS2;
+        t4_start_hold_ticks--;
+    }
+    if (t4_stop_hold_ticks > 0U) {
+        accel_ms2 -= T4_CAR_ACCEL_HOLD_MS2;
+        t4_stop_hold_ticks--;
+    }
+
+    return clamp_float(accel_ms2,
+                       -T4_CAR_ACCEL_FF_LIMIT_MS2,
+                       T4_CAR_ACCEL_FF_LIMIT_MS2);
+}
+
+static void T5_ResetCarAccelFeedforward(void)
+{
+    t5_ff_session_active = false;
+    t5_start_hold_ticks = 0U;
+    t5_stop_hold_ticks = 0U;
+    t5_prev_line_accel_ms2 = 0.0f;
+}
+
+static float T5_BuildCarAccelFeedforward(void)
+{
+    float line_accel_ms2 = LineTrack_GetLongitudinalAccelMS2();
+    float curve_accel_ms2 = LineTrack_Get_TurnOut() * T5_CURVE_ACCEL_FF_GAIN;
+    float accel_ms2;
+
+    if (KeyMenu_GetTaskID() != TASK_T5) {
+        T5_ResetCarAccelFeedforward();
+        return 0.0f;
+    }
+
+    if (!t5_ff_session_active) {
+        t5_ff_session_active = true;
+        t5_start_hold_ticks = T5_CAR_ACCEL_START_HOLD_TICKS;
+        t5_stop_hold_ticks = 0U;
+        t5_prev_line_accel_ms2 = 0.0f;
+    }
+
+    if ((line_accel_ms2 > T5_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
+        (t5_prev_line_accel_ms2 <= T5_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
+        t5_start_hold_ticks = T5_CAR_ACCEL_START_HOLD_TICKS;
+    }
+    if ((line_accel_ms2 < -T5_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
+        (t5_prev_line_accel_ms2 >= -T5_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
+        t5_stop_hold_ticks = T5_CAR_ACCEL_STOP_HOLD_TICKS;
+    }
+
+    t5_prev_line_accel_ms2 = line_accel_ms2;
+
+    curve_accel_ms2 = clamp_float(curve_accel_ms2,
+                                  -T5_CURVE_ACCEL_FF_LIMIT_MS2,
+                                  T5_CURVE_ACCEL_FF_LIMIT_MS2);
+    accel_ms2 = T5_CAR_ACCEL_FF_SIGN *
+        ((line_accel_ms2 * T5_CAR_ACCEL_FF_GAIN) + curve_accel_ms2);
+    if (t5_start_hold_ticks > 0U) {
+        accel_ms2 += T5_CAR_ACCEL_FF_SIGN * T5_CAR_ACCEL_HOLD_MS2;
+        t5_start_hold_ticks--;
+    }
+    if (t5_stop_hold_ticks > 0U) {
+        accel_ms2 -= T5_CAR_ACCEL_FF_SIGN * T5_CAR_ACCEL_HOLD_MS2;
+        t5_stop_hold_ticks--;
+    }
+
+    return clamp_float(accel_ms2,
+                       -T5_CAR_ACCEL_FF_LIMIT_MS2,
+                       T5_CAR_ACCEL_FF_LIMIT_MS2);
 }
 
 static void PD42S1_WritePulse(uint16_t pulse)
@@ -99,7 +243,6 @@ static void PD42S1_SoftLockCenter(void)
 
 int main(void)
 {
-    char oled_str[50];
     uint32_t last_vofa_tick = 0;
     uint32_t last_oled_tick = 0;
     uint32_t last_task_run_tick = 0;
@@ -136,8 +279,8 @@ int main(void)
     DL_Timer_startCounter(TIMER_0_INST);
     NVIC_EnableIRQ(TIMER_0_INST_INT_IRQN);
 
-#if APP_AUTO_START_T3
-    KeyMenu_StartTask(TASK_T3);
+#if APP_AUTO_START_TASK
+    KeyMenu_StartTask((TaskID)APP_AUTO_START_TASK);
 #endif
 
     while (1) {
@@ -148,10 +291,27 @@ int main(void)
         VisionUart_Poll(control_ticks_10ms);
 
         g_vision_ball = VisionUart_GetLatest();
-        T3Task_UpdateVision(g_vision_ball.valid, g_vision_ball.x_mm);
+        T3Task_UpdateVision(g_vision_ball.valid, g_vision_ball.timed_out,
+                            g_vision_ball.seq, g_vision_ball.x_mm);
         if (g_vision_ball.valid) {
-            BalanceControl_SetRawPosition(&bc,
-                (float)g_vision_ball.x_mm / 10.0f);
+            if ((!has_vision_seq) || (g_vision_ball.seq != last_vision_seq)) {
+                uint32_t sample_tick = control_ticks_10ms;
+                uint32_t sample_ticks = has_vision_seq ?
+                    (uint32_t)(sample_tick - last_vision_tick) : 1U;
+
+                if (sample_ticks == 0U) {
+                    sample_ticks = 1U;
+                }
+                BalanceControl_SetRawPositionTimed(
+                    &bc,
+                    (float)g_vision_ball.x_mm / 10.0f,
+                    (float)sample_ticks * BC_DT_S);
+                last_vision_seq = g_vision_ball.seq;
+                last_vision_tick = sample_tick;
+                has_vision_seq = true;
+            }
+        } else {
+            has_vision_seq = false;
         }
 
         now = control_ticks_10ms;
@@ -165,42 +325,18 @@ int main(void)
 
         if ((uint32_t)(now - last_vofa_tick) >= 2U) {
             last_vofa_tick = now;
-            Vofa_SendTelemetry();
+            if (!T3Task_IsActive()) {
+                Vofa_SendTelemetry();
+            }
         }
 
-        if ((uint32_t)(now - last_oled_tick) >= 10U) {
+        if ((uint32_t)(now - last_oled_tick) >= APP_OLED_PERIOD_TICKS) {
             last_oled_tick = now;
 
             KeyMenu_OLED();
-            if (T3Task_IsActive()) {
-                int pwm_delta = (int)bc.pwm_pulse - (int)BC_PWM_CENTER_US;
-                if (g_vision_ball.valid) {
-                    sprintf(oled_str, "T%+d X%+d P%+d",
-                        (int)T3Task_GetTargetMM(),
-                        (int)g_vision_ball.x_mm,
-                        pwm_delta);
-                } else if (g_vision_ball.timed_out) {
-                    sprintf(oled_str, "T%+d TO P%+d",
-                        (int)T3Task_GetTargetMM(),
-                        pwm_delta);
-                } else {
-                    sprintf(oled_str, "T%+d L P%+d",
-                        (int)T3Task_GetTargetMM(),
-                        pwm_delta);
-                }
-            } else if (g_vision_ball.valid) {
-                sprintf(oled_str, "Ball:%dmm C%u", g_vision_ball.x_mm,
-                    (unsigned)g_vision_ball.conf_percent);
-            } else if (g_vision_ball.timed_out) {
-                sprintf(oled_str, "ball:TIMEOUT");
-            } else {
-                mt6701_status = MT6701_Update(&mt6701);
-                sprintf(oled_str, "LOST S%u",
-                    (unsigned)g_vision_ball.seq);
-            }
-            OLED_ShowLineString(4, 1, oled_str);
-            OLED_Refresh();
+            OLED_RequestRefresh();
         }
+        OLED_RefreshStep();
     }
 }
 
@@ -211,19 +347,29 @@ void TIMER_0_INST_IRQHandler(void)
             bool need_balance = false;
 
             KeyMenu_Scan();
+            T3Task_Tick10ms();
 
             switch (g_control_state) {
                 case CONTROL_IDLE:
+                    T4_ResetCarAccelFeedforward();
+                    T5_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Stop();
                     PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_TRACK_ONLY:
+                    T4_ResetCarAccelFeedforward();
+                    T5_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Loop_10ms();
                     PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_STATIC_BALL:
+                    T4_ResetCarAccelFeedforward();
+                    T5_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Stop();
                     need_balance = true;
                     break;
@@ -234,12 +380,25 @@ void TIMER_0_INST_IRQHandler(void)
                     break;
 
                 default:
+                    T4_ResetCarAccelFeedforward();
+                    T5_ResetCarAccelFeedforward();
                     LineTrack_Stop();
                     PD42S1_SoftLockCenter();
                     break;
             }
 
             if (need_balance) {
+                if (KeyMenu_GetTaskID() == TASK_T4) {
+                    T5_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, T4_BuildCarAccelFeedforward());
+                } else if (KeyMenu_GetTaskID() == TASK_T5) {
+                    T4_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, T5_BuildCarAccelFeedforward());
+                } else {
+                    T4_ResetCarAccelFeedforward();
+                    T5_ResetCarAccelFeedforward();
+                    BalanceControl_SetCarAccel(&bc, 0.0f);
+                }
                 if (g_vision_ball.valid) {
                     BalanceControl_Run(&bc);
                     if (!g_pd42s1_pwm_running) {
