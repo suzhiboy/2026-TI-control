@@ -82,7 +82,7 @@ RGB888P_SIZE = [AI_FRAME_WIDTH, AI_FRAME_HEIGHT]
 # Enable display/prints only while tuning the camera and rod endpoints.
 USE_ROI_REFINE = False
 DRAW_RESULT = False
-SHOW_IMAGE = True
+SHOW_IMAGE = False
 DEBUG_FRAME_STATUS = False
 PRINT_MEMORY = False
 STOP_AFTER_SECONDS = 0

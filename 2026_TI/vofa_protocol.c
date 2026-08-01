@@ -64,6 +64,12 @@ static int parse_pid_key(const char *key, VofaPidGroup *group, VofaPidTerm *term
     } else if (strncmp(key, "SR_", 3) == 0) {
         *group = VOFA_PID_SPEED_RIGHT;
         key += 3;
+    } else if (strncmp(key, "BPOS_", 5) == 0) {
+        *group = VOFA_PID_BALANCE_POS;
+        key += 5;
+    } else if (strncmp(key, "BVEL_", 5) == 0) {
+        *group = VOFA_PID_BALANCE_VEL;
+        key += 5;
     } else {
         return 0;
     }

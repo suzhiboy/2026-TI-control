@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include "balance_control.h"
 #include "encoder.h"
 #include "line_follow.h"
 #include "motor.h"
@@ -16,6 +17,12 @@ static volatile char vofa_rx_buf[VOFA_RX_BUF_SIZE];
 static volatile uint8_t vofa_rx_len = 0;
 static volatile bool vofa_line_ready = false;
 static char vofa_line[VOFA_RX_BUF_SIZE];
+static BalanceControl_t *vofa_balance_control = NULL;
+
+void Vofa_AttachBalanceControl(BalanceControl_t *controller)
+{
+    vofa_balance_control = controller;
+}
 
 static void vofa_send(const char *text)
 {
@@ -50,6 +57,18 @@ static void send_params(void)
              params.speed_right.kp, params.speed_right.ki, params.speed_right.kd,
              params.base_speed);
     vofa_send(buf);
+
+    if (vofa_balance_control != NULL) {
+        snprintf(buf, sizeof(buf),
+                 "#BPID BPOS %.5f %.5f %.5f BVEL %.5f %.5f %.5f\r\n",
+                 vofa_balance_control->pos_kp,
+                 vofa_balance_control->pos_ki,
+                 vofa_balance_control->pos_kd,
+                 vofa_balance_control->vel_kp,
+                 vofa_balance_control->vel_ki,
+                 vofa_balance_control->vel_kd);
+        vofa_send(buf);
+    }
 }
 
 static void set_pid_gain(PidGainSet *gains, VofaPidTerm term, float value)
@@ -68,9 +87,92 @@ static void set_pid_gain(PidGainSet *gains, VofaPidTerm term, float value)
     }
 }
 
+static bool is_balance_pid_group(VofaPidGroup group)
+{
+    return (group == VOFA_PID_BALANCE_POS) ||
+           (group == VOFA_PID_BALANCE_VEL);
+}
+
+static bool balance_gain_value_is_valid(float value)
+{
+    return (value >= 0.0f) && (value <= 10.0f);
+}
+
+static void reset_balance_pid_defaults(void)
+{
+    if (vofa_balance_control == NULL) {
+        return;
+    }
+
+    BalanceControl_SetPositionPID(vofa_balance_control,
+        BC_DEFAULT_POS_KP, BC_DEFAULT_POS_KI, BC_DEFAULT_POS_KD);
+    BalanceControl_SetVelocityPID(vofa_balance_control,
+        BC_DEFAULT_VEL_KP, BC_DEFAULT_VEL_KI, BC_DEFAULT_VEL_KD);
+    BalanceControl_ClearPidState(vofa_balance_control);
+}
+
+static bool apply_set_balance_pid(const VofaCommand *cmd)
+{
+    float pos_kp;
+    float pos_ki;
+    float pos_kd;
+    float vel_kp;
+    float vel_ki;
+    float vel_kd;
+
+    if ((vofa_balance_control == NULL) ||
+        !balance_gain_value_is_valid(cmd->value)) {
+        return false;
+    }
+
+    pos_kp = vofa_balance_control->pos_kp;
+    pos_ki = vofa_balance_control->pos_ki;
+    pos_kd = vofa_balance_control->pos_kd;
+    vel_kp = vofa_balance_control->vel_kp;
+    vel_ki = vofa_balance_control->vel_ki;
+    vel_kd = vofa_balance_control->vel_kd;
+
+    if (cmd->pid_group == VOFA_PID_BALANCE_POS) {
+        switch (cmd->pid_term) {
+        case VOFA_PID_KP:
+            pos_kp = cmd->value;
+            break;
+        case VOFA_PID_KI:
+            pos_ki = cmd->value;
+            break;
+        case VOFA_PID_KD:
+        default:
+            pos_kd = cmd->value;
+            break;
+        }
+        BalanceControl_SetPositionPID(vofa_balance_control, pos_kp, pos_ki, pos_kd);
+    } else {
+        switch (cmd->pid_term) {
+        case VOFA_PID_KP:
+            vel_kp = cmd->value;
+            break;
+        case VOFA_PID_KI:
+            vel_ki = cmd->value;
+            break;
+        case VOFA_PID_KD:
+        default:
+            vel_kd = cmd->value;
+            break;
+        }
+        BalanceControl_SetVelocityPID(vofa_balance_control, vel_kp, vel_ki, vel_kd);
+    }
+
+    BalanceControl_ClearPidState(vofa_balance_control);
+    return true;
+}
+
 static bool apply_set_pid(const VofaCommand *cmd)
 {
     PidTuningParams params;
+
+    if (is_balance_pid_group(cmd->pid_group)) {
+        return apply_set_balance_pid(cmd);
+    }
 
     LineTrack_GetParams(&params);
 
@@ -155,7 +257,11 @@ static void handle_command(const char *line)
 
     switch (cmd.type) {
     case VOFA_CMD_SET_PID:
-        vofa_send(apply_set_pid(&cmd) ? "#ACK SET_PID\r\n" : "#ERR BAD_RANGE\r\n");
+        if (is_balance_pid_group(cmd.pid_group)) {
+            vofa_send(apply_set_pid(&cmd) ? "#ACK SET_BPID\r\n" : "#ERR BAD_RANGE\r\n");
+        } else {
+            vofa_send(apply_set_pid(&cmd) ? "#ACK SET_PID\r\n" : "#ERR BAD_RANGE\r\n");
+        }
         break;
     case VOFA_CMD_SET_BASE_SPEED:
         vofa_send(apply_base_speed(cmd.value) ? "#ACK BASE\r\n" : "#ERR BAD_RANGE\r\n");
@@ -167,12 +273,14 @@ static void handle_command(const char *line)
         PidParams_SetDefaults(&params);
         LineTrack_SetParams(&params);
         LineTrack_ClearPidState();
+        reset_balance_pid_defaults();
         vofa_send("#ACK LOAD DEFAULT\r\n");
         break;
     case VOFA_CMD_RESET:
         PidParams_SetDefaults(&params);
         LineTrack_SetParams(&params);
         LineTrack_ClearPidState();
+        reset_balance_pid_defaults();
         vofa_send("#ACK RESET\r\n");
         break;
     case VOFA_CMD_GET:
@@ -180,6 +288,9 @@ static void handle_command(const char *line)
         break;
     case VOFA_CMD_CLEAR_PID:
         LineTrack_ClearPidState();
+        if (vofa_balance_control != NULL) {
+            BalanceControl_ClearPidState(vofa_balance_control);
+        }
         vofa_send("#ACK PIDCLR\r\n");
         break;
     case VOFA_CMD_MOTOR_TEST:

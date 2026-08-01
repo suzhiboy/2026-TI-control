@@ -43,6 +43,33 @@ def main():
             "T6 must freeze final lap time after braking")
     require('"T%+4d X%+4dmm"' in key_menu_c,
             "T6 OLED must show target and live ball coordinate")
+    require("T6_SETUP_SIGN" in key_menu_c and
+            "T6_SETUP_CM" in key_menu_c and
+            "T6_SETUP_TENTH" in key_menu_c,
+            "T6 must expose a three-stage one-key target setup state")
+    require("static void T6_SetupStart(void)" in key_menu_c and
+            "t6_setup_active = true;" in key_menu_c,
+            "K6 must enter a target setup screen before starting T6")
+    require("static void T6_SetupApplyTarget(void)" in key_menu_c and
+            "menu.target_mm = (int16_t)(t6_setup_sign * magnitude_mm);" in key_menu_c,
+            "T6 setup must calculate signed target_mm in 1 mm units")
+    require("Key_ConsumeShort(KEY_IDX_K6)" in key_menu_c and
+            "Key_ConsumeLong(KEY_IDX_K6)" in key_menu_c and
+            "t6_setup_mode = T6_SETUP_CM;" in key_menu_c and
+            "t6_setup_mode = T6_SETUP_TENTH;" in key_menu_c and
+            "KeyMenu_StartTask(TASK_T6);" in key_menu_c,
+            "single-key T6 setup must use K6 short to edit and K6 long to advance/start")
+    require("if (key_task_map[idx] == TASK_T6)" in key_menu_c and
+            "T6_SetupStart();" in key_menu_c,
+            "K6 short press must open target setup instead of immediately launching T6")
+    require("if (t6_setup_active) {\n        T6_SetupHandleKeys();\n        return;\n    }" in key_menu_c,
+            "KeyMenu_Scan must route input to T6 setup before normal menu FSM")
+    require("if (t6_setup_active) {\n        T6_SetupOLED();\n        return;\n    }" in key_menu_c,
+            "KeyMenu_OLED must show the T6 setup page while selecting target")
+    require("t6_setup_wait_release" in key_menu_c and
+            "if (t6_setup_wait_release)" in key_menu_c and
+            "t6_setup_wait_release = true;" in key_menu_c,
+            "T6 setup must ignore the release edge after a long press")
 
 
 if __name__ == "__main__":

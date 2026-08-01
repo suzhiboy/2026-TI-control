@@ -31,7 +31,9 @@ typedef enum {
 typedef enum {
     VOFA_PID_LINE = 0,
     VOFA_PID_SPEED_LEFT,
-    VOFA_PID_SPEED_RIGHT
+    VOFA_PID_SPEED_RIGHT,
+    VOFA_PID_BALANCE_POS,
+    VOFA_PID_BALANCE_VEL
 } VofaPidGroup;
 
 typedef enum {

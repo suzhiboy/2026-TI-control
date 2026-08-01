@@ -91,9 +91,10 @@ def main():
     require("#define T3_STILL_FRAME_FREEZE_COUNT (4U)" in t3_task_h,
             "T3 final hold must freeze only after the configured identical fresh frame count")
     require("#define T3_FREEZE_RETURN_TICKS     (7U)" in t3_task_h and
-            "#define T3_FREEZE_HOLD_BIAS_PERCENT (45U)" in t3_task_h and
+            "#define T3_FREEZE_LEVEL_RETURN_TICKS (12U)" in t3_task_h and
+            "#define T3_FREEZE_HOLD_BIAS_PERCENT (75U)" in t3_task_h and
             "#define T3_FREEZE_HOLD_MIN_DELTA_US (45U)" in t3_task_h,
-            "T3 final freeze must slew back to a minimum biased hold pulse before the timer stops")
+            "T3 final freeze must use a biased settle pulse before leveling to horizontal")
     require("#define T3_TRAVEL_NEGATIVE_DELTA_LIMIT_US (350U)" in t3_task_h,
             "T3 travel must preserve the current negative PWM authority")
     require("#define T3_TRAVEL_POSITIVE_DELTA_LIMIT_US (250U)" in t3_task_h,
@@ -106,9 +107,9 @@ def main():
             "T3 negative return must use a slower profile than the positive travel phase")
     require("#define T3_NEGATIVE_CAPTURE_ENTRY_MM       (40)" in t3_task_h and
             "#define T3_CAPTURE_NEGATIVE_DELTA_LIMIT_US (80U)" in t3_task_h and
-            "#define T3_CAPTURE_POSITIVE_DELTA_LIMIT_US (35U)" in t3_task_h and
-            "#define T3_CAPTURE_MIN_DRIVE_US            (0U)" in t3_task_h,
-            "T3 must switch to a low-output capture profile before crossing center")
+            "#define T3_CAPTURE_POSITIVE_DELTA_LIMIT_US (150U)" in t3_task_h and
+            "#define T3_CAPTURE_MIN_DRIVE_US            (30U)" in t3_task_h,
+            "T3 capture must keep enough positive PWM authority to cross 0mm")
     require("#define T3_CAPTURE_POS_KP                  (0.055f)" in t3_task_h and
             "#define T3_CAPTURE_POS_KD                  (0.06f)" in t3_task_h and
             "#define T3_CAPTURE_VEL_KP                  (0.032f)" in t3_task_h,
@@ -167,11 +168,12 @@ def main():
             "begin_freeze_return" in t3_task_c and
             "t3.phase = T3_PHASE_FINAL_RETURN" in t3_task_c and
             "update_freeze_return" in t3_task_c and
-            "final_hold_pulse_us" in t3_task_c and
+            "freeze_bias_pulse_us" in t3_task_c and
+            "T3_FREEZE_LEVEL_RETURN_TICKS" in t3_task_c and
             "T3_FREEZE_HOLD_MIN_DELTA_US" in t3_task_c and
             "t3.phase = T3_PHASE_HOLD_NEGATIVE" in t3_task_c and
             "apply_reference_mm((float)T3_NEGATIVE_TARGET_MM)" in t3_task_c,
-            "T3 final hold must keep the negative reference active and return PWM to a biased hold pulse")
+            "T3 final hold must keep the negative reference active and finish at horizontal PWM")
     require("if (t3.phase == T3_PHASE_HOLD_NEGATIVE) {\n        return;" in t3_task_c and
             "if (t3.phase == T3_PHASE_FINAL_RETURN) {\n        update_freeze_return();\n        return;" in t3_task_c and
             "(t3.phase != T3_PHASE_FINAL_RETURN)" in t3_task_c,
@@ -372,14 +374,14 @@ def main():
             "t5_elapsed_ticks_10ms++;" in key_menu_c,
             "KeyMenu_Scan must advance T5 time every 10 ms while running")
     require("#define T5_CAR_ACCEL_FF_GAIN       (2.0f)" in empty_c and
-            "#define T5_CAR_ACCEL_FF_SIGN       (1.0f)" in empty_c and
+            "#define T5_CAR_ACCEL_FF_SIGN       (-1.0f)" in empty_c and
             "#define T5_CAR_ACCEL_FF_LIMIT_MS2  (1.20f)" in empty_c and
             "#define T5_CURVE_ACCEL_FF_GAIN     (0.06f)" in empty_c and
             "LineTrack_Get_TurnOut() * T5_CURVE_ACCEL_FF_GAIN" in empty_c and
             "static float T5_BuildCarAccelFeedforward(void)" in empty_c and
             "KeyMenu_GetTaskID() == TASK_T5" in empty_c and
             "BalanceControl_SetCarAccel(&bc, T5_BuildCarAccelFeedforward());" in empty_c,
-            "T5 must use stronger inertia feed-forward than the T4 default")
+            "T5 must use board-verified reversed inertia feed-forward versus the first T5 trial")
     require("T5Task_Stop();" not in key_menu_c and
             "static void T5_Stop(void)\n{" in key_menu_c and
             "T3Task_Stop();" in key_menu_c.split("static void T5_Stop", 1)[1].split("static void T6_Init", 1)[0] and

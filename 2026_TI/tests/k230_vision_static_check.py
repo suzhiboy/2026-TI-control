@@ -57,7 +57,7 @@ def main():
     require("filtered_x_mm" in source, "filtered x position must be used")
     require("USE_ROI_REFINE = False" in source, "ROI refinement must be switchable and disabled by default")
     require("DRAW_RESULT = False" in source, "drawing YOLO boxes must be switchable and disabled by default")
-    require("SHOW_IMAGE = True" in source, "image display must be switchable")
+    require("SHOW_IMAGE = False" in source, "image display must be switchable and disabled during control")
     require("PRINT_MEMORY = False" in source, "memory diagnostic output must be disabled during control")
     require("MEMORY_PRINT_EVERY_N_FRAMES = 30" in source, "memory diagnostics must be throttled")
     require("gc.mem_free()" in source, "K230 script must report free memory")

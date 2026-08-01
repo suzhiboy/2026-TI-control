@@ -158,6 +158,30 @@ static int expected_freeze_return_pulse(uint16_t start_pulse,
     return (int)((int32_t)start_pulse + delta);
 }
 
+static int expected_level_return_pulse(uint16_t start_pulse,
+                                       uint16_t target_pulse,
+                                       uint32_t elapsed_ticks)
+{
+    int32_t delta;
+    int32_t numerator;
+
+    if (elapsed_ticks >= T3_FREEZE_LEVEL_RETURN_TICKS) {
+        return (int)target_pulse;
+    }
+
+    delta = (int32_t)target_pulse - (int32_t)start_pulse;
+    numerator = delta * (int32_t)elapsed_ticks;
+    if (numerator >= 0) {
+        delta = (numerator + (int32_t)(T3_FREEZE_LEVEL_RETURN_TICKS / 2U)) /
+            (int32_t)T3_FREEZE_LEVEL_RETURN_TICKS;
+    } else {
+        delta = (numerator - (int32_t)(T3_FREEZE_LEVEL_RETURN_TICKS / 2U)) /
+            (int32_t)T3_FREEZE_LEVEL_RETURN_TICKS;
+    }
+
+    return (int)((int32_t)start_pulse + delta);
+}
+
 static uint16_t expected_final_hold_pulse(uint16_t start_pulse)
 {
     int32_t neutral = (int32_t)BC_PWM_CENTER_US;
@@ -537,18 +561,45 @@ static void test_final_same_coordinate_freezes_after_configured_fresh_frames(voi
         T3Task_Run();
     }
 
-    expect_int("freeze return completes into hold",
-               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("freeze return reaches bias before level return",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
     expect_int("freeze return holds biased pulse",
                (int)hold_pulse, (int)last_override_pulse);
+
+    for (uint8_t i = 0U; i < (uint8_t)(T3_FREEZE_LEVEL_RETURN_TICKS / 2U); i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("level return keeps oled timer running",
+               (int)(return_start_ticks + T3_FREEZE_RETURN_TICKS +
+                     (T3_FREEZE_LEVEL_RETURN_TICKS / 2U)),
+               (int)T3Task_GetElapsedTicks10ms());
+    expect_int("level return slews toward horizontal",
+               expected_level_return_pulse(hold_pulse, BC_PWM_CENTER_US,
+                                           T3_FREEZE_LEVEL_RETURN_TICKS / 2U),
+               (int)last_override_pulse);
+    expect_int("level return still before hold",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
+
+    for (uint8_t i = (uint8_t)(T3_FREEZE_LEVEL_RETURN_TICKS / 2U);
+         i < T3_FREEZE_LEVEL_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("level return completes into hold",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("final hold is horizontal",
+               BC_PWM_CENTER_US, (int)last_override_pulse);
 
     T3Task_UpdateVision(true, false, ++next_vision_seq, -70);
     T3Task_Run();
 
-    expect_bool("hold keeps center pwm frozen after leaving final window",
+    expect_bool("hold keeps horizontal pwm frozen after leaving final window",
                 true, last_override_enabled);
-    expect_int("hold remains biased after later coordinate changes",
-               (int)hold_pulse, (int)last_override_pulse);
+    expect_int("hold remains horizontal after later coordinate changes",
+               BC_PWM_CENTER_US, (int)last_override_pulse);
 }
 
 static void test_final_hold_keeps_minimum_bias_when_freeze_pwm_is_near_center(void)
@@ -577,11 +628,21 @@ static void test_final_hold_keeps_minimum_bias_when_freeze_pwm_is_near_center(vo
         T3Task_Run();
     }
 
-    expect_int("near-center freeze completes hold",
-               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("near-center freeze reaches minimum bias before level return",
+               T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
     expect_int("near-center freeze keeps minimum hold bias",
                (int)(BC_PWM_CENTER_US + T3_FREEZE_HOLD_MIN_DELTA_US),
                (int)last_override_pulse);
+
+    for (uint8_t i = 0U; i < T3_FREEZE_LEVEL_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+
+    expect_int("near-center freeze completes hold",
+               T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
+    expect_int("near-center final hold is horizontal",
+               BC_PWM_CENTER_US, (int)last_override_pulse);
 }
 
 static void test_same_coordinate_starts_return_without_stability_timer(void)
@@ -646,6 +707,10 @@ static void test_final_stability_requires_continuous_samples(void)
         T3Task_Tick10ms();
         T3Task_Run();
     }
+    for (uint8_t i = 0U; i < T3_FREEZE_LEVEL_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
     expect_int("phase after freeze return completes",
                T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
     expect_int("target while holding", T3_NEGATIVE_TARGET_MM, T3Task_GetTargetMM());
@@ -670,6 +735,10 @@ static void test_hold_keeps_negative_reference_after_new_samples(void)
                T3Task_GetPhase());
     run_inside_target(T3_STILL_FRAME_FREEZE_COUNT, -50);
     for (uint8_t i = 0U; i < T3_FREEZE_RETURN_TICKS; i++) {
+        T3Task_Tick10ms();
+        T3Task_Run();
+    }
+    for (uint8_t i = 0U; i < T3_FREEZE_LEVEL_RETURN_TICKS; i++) {
         T3Task_Tick10ms();
         T3Task_Run();
     }
@@ -708,7 +777,8 @@ static void test_elapsed_time_stops_after_freeze_return_completes(void)
                T3_PHASE_FINAL_RETURN, T3Task_GetPhase());
     return_start_ticks = T3Task_GetElapsedTicks10ms();
 
-    for (uint8_t i = 0U; i < (uint8_t)(T3_FREEZE_RETURN_TICKS - 1U); i++) {
+    for (uint8_t i = 0U; i < (uint8_t)(T3_FREEZE_RETURN_TICKS +
+                                       T3_FREEZE_LEVEL_RETURN_TICKS - 1U); i++) {
         T3Task_Tick10ms();
         T3Task_Run();
         expect_int("elapsed keeps running during freeze return",
@@ -721,7 +791,8 @@ static void test_elapsed_time_stops_after_freeze_return_completes(void)
                T3_PHASE_HOLD_NEGATIVE, T3Task_GetPhase());
     completed_ticks = T3Task_GetElapsedTicks10ms();
     expect_int("elapsed includes freeze return",
-               (int)(return_start_ticks + T3_FREEZE_RETURN_TICKS),
+               (int)(return_start_ticks + T3_FREEZE_RETURN_TICKS +
+                     T3_FREEZE_LEVEL_RETURN_TICKS),
                (int)completed_ticks);
 
     T3Task_Tick10ms();

@@ -120,6 +120,7 @@ static const char *phase_label(void)
         case T3_PHASE_TO_NEGATIVE: return "NEG";
         case T3_PHASE_FINAL_RETURN: return "RET";
         case T3_PHASE_HOLD_NEGATIVE: return "HLD";
+        case T3_PHASE_TUNE_HOLD: return "TUN";
         case T3_PHASE_IDLE:
         default: return "IDL";
     }
@@ -163,7 +164,7 @@ static uint16_t neutral_pulse_us(void)
     return (uint16_t)(t3.controller->pwm_neutral + 0.5f);
 }
 
-static uint16_t final_hold_pulse_us(void)
+static uint16_t freeze_bias_pulse_us(void)
 {
     int32_t neutral = (int32_t)neutral_pulse_us();
     int32_t start = (int32_t)t3.freeze_return_start_pulse;
@@ -226,24 +227,37 @@ static uint16_t interpolate_pulse(uint16_t start_pulse,
 static void update_freeze_return(void)
 {
     uint32_t elapsed;
-    uint16_t hold_pulse;
+    uint32_t level_elapsed;
+    uint16_t bias_pulse;
     uint16_t pulse;
+    uint16_t neutral;
 
     if ((t3.controller == 0) || !t3.final_freeze_active) {
         return;
     }
 
-    hold_pulse = final_hold_pulse_us();
     elapsed = t3.elapsed_ticks_10ms - t3.freeze_return_start_tick;
-    pulse = interpolate_pulse(t3.freeze_return_start_pulse, hold_pulse,
-                              elapsed, T3_FREEZE_RETURN_TICKS);
-    BalanceControl_SetPwmOverride(t3.controller, true, pulse);
+    neutral = neutral_pulse_us();
+    bias_pulse = freeze_bias_pulse_us();
 
-    if (elapsed >= T3_FREEZE_RETURN_TICKS) {
-        t3.phase = T3_PHASE_HOLD_NEGATIVE;
-        BalanceControl_SetPwmOverride(t3.controller, true, hold_pulse);
-        apply_reference_mm((float)T3_NEGATIVE_TARGET_MM);
+    if (elapsed < T3_FREEZE_RETURN_TICKS) {
+        pulse = interpolate_pulse(t3.freeze_return_start_pulse, bias_pulse,
+                                  elapsed, T3_FREEZE_RETURN_TICKS);
+        BalanceControl_SetPwmOverride(t3.controller, true, pulse);
+        return;
     }
+
+    level_elapsed = elapsed - T3_FREEZE_RETURN_TICKS;
+    if (level_elapsed < T3_FREEZE_LEVEL_RETURN_TICKS) {
+        pulse = interpolate_pulse(bias_pulse, neutral,
+                                  level_elapsed, T3_FREEZE_LEVEL_RETURN_TICKS);
+        BalanceControl_SetPwmOverride(t3.controller, true, pulse);
+        return;
+    }
+
+    t3.phase = T3_PHASE_HOLD_NEGATIVE;
+    BalanceControl_SetPwmOverride(t3.controller, true, neutral);
+    apply_reference_mm((float)T3_NEGATIVE_TARGET_MM);
 }
 
 static void begin_freeze_return(void)
@@ -311,9 +325,10 @@ static void apply_travel_profile(void)
         T3_TRAVEL_NEGATIVE_DELTA_LIMIT_US,
         T3_TRAVEL_POSITIVE_DELTA_LIMIT_US,
         T3_TRAVEL_MIN_DRIVE_US);
-    BalanceControl_SetPositionPD(t3.controller,
-        BC_DEFAULT_POS_KP, BC_DEFAULT_POS_KD);
-    BalanceControl_SetVelocityP(t3.controller, BC_DEFAULT_VEL_KP);
+    BalanceControl_SetPositionPID(t3.controller,
+        BC_DEFAULT_POS_KP, BC_DEFAULT_POS_KI, BC_DEFAULT_POS_KD);
+    BalanceControl_SetVelocityPID(t3.controller,
+        BC_DEFAULT_VEL_KP, BC_DEFAULT_VEL_KI, BC_DEFAULT_VEL_KD);
     t3.capture_profile_active = false;
     t3.final_profile_active = false;
     clear_final_freeze();
@@ -331,9 +346,10 @@ static void apply_return_profile(void)
         T3_RETURN_NEGATIVE_DELTA_LIMIT_US,
         T3_RETURN_POSITIVE_DELTA_LIMIT_US,
         T3_RETURN_MIN_DRIVE_US);
-    BalanceControl_SetPositionPD(t3.controller,
-        BC_DEFAULT_POS_KP, BC_DEFAULT_POS_KD);
-    BalanceControl_SetVelocityP(t3.controller, BC_DEFAULT_VEL_KP);
+    BalanceControl_SetPositionPID(t3.controller,
+        BC_DEFAULT_POS_KP, BC_DEFAULT_POS_KI, BC_DEFAULT_POS_KD);
+    BalanceControl_SetVelocityPID(t3.controller,
+        BC_DEFAULT_VEL_KP, BC_DEFAULT_VEL_KI, BC_DEFAULT_VEL_KD);
     t3.capture_profile_active = false;
     t3.final_profile_active = false;
     clear_final_freeze();
@@ -352,9 +368,10 @@ static void apply_capture_profile(void)
         T3_CAPTURE_NEGATIVE_DELTA_LIMIT_US,
         T3_CAPTURE_POSITIVE_DELTA_LIMIT_US,
         T3_CAPTURE_MIN_DRIVE_US);
-    BalanceControl_SetPositionPD(t3.controller,
-        T3_CAPTURE_POS_KP, T3_CAPTURE_POS_KD);
-    BalanceControl_SetVelocityP(t3.controller, T3_CAPTURE_VEL_KP);
+    BalanceControl_SetPositionPID(t3.controller,
+        T3_CAPTURE_POS_KP, T3_CAPTURE_POS_KI, T3_CAPTURE_POS_KD);
+    BalanceControl_SetVelocityPID(t3.controller,
+        T3_CAPTURE_VEL_KP, T3_CAPTURE_VEL_KI, T3_CAPTURE_VEL_KD);
     t3.capture_profile_active = true;
     t3.final_profile_active = false;
     clear_final_freeze();
@@ -372,9 +389,10 @@ static void apply_final_profile(void)
         T3_FINAL_NEGATIVE_DELTA_LIMIT_US,
         T3_FINAL_POSITIVE_DELTA_LIMIT_US,
         T3_FINAL_MIN_DRIVE_US);
-    BalanceControl_SetPositionPD(t3.controller,
-        T3_FINAL_POS_KP, T3_FINAL_POS_KD);
-    BalanceControl_SetVelocityP(t3.controller, T3_FINAL_VEL_KP);
+    BalanceControl_SetPositionPID(t3.controller,
+        T3_FINAL_POS_KP, T3_FINAL_POS_KI, T3_FINAL_POS_KD);
+    BalanceControl_SetVelocityPID(t3.controller,
+        T3_FINAL_VEL_KP, T3_FINAL_VEL_KI, T3_FINAL_VEL_KD);
     t3.capture_profile_active = true;
     t3.final_profile_active = true;
 }
@@ -391,9 +409,10 @@ static void apply_center_profile(void)
         T3_CENTER_DELTA_LIMIT_US,
         T3_CENTER_DELTA_LIMIT_US,
         T3_CENTER_MIN_DRIVE_US);
-    BalanceControl_SetPositionPD(t3.controller,
-        T3_CENTER_POS_KP, T3_CENTER_POS_KD);
-    BalanceControl_SetVelocityP(t3.controller, T3_CENTER_VEL_KP);
+    BalanceControl_SetPositionPID(t3.controller,
+        T3_CENTER_POS_KP, T3_CENTER_POS_KI, T3_CENTER_POS_KD);
+    BalanceControl_SetVelocityPID(t3.controller,
+        T3_CENTER_VEL_KP, T3_CENTER_VEL_KI, T3_CENTER_VEL_KD);
     t3.capture_profile_active = false;
     t3.final_profile_active = false;
     clear_final_freeze();
@@ -491,6 +510,10 @@ void T3Task_Run(void)
         return;
     }
 
+    if (t3.phase == T3_PHASE_TUNE_HOLD) {
+        return;
+    }
+
     if (!vision_is_fresh()) {
         t3.arrival_ticks = 0U;
         t3.stability_active = false;
@@ -578,6 +601,110 @@ void T3Task_Stop(void)
 void T3Task_StartCenterHold(void)
 {
     T3Task_StartTargetHold(0);
+}
+
+void T3Task_StartTuneHold(int16_t target_mm, const T3TuneProfile *profile)
+{
+    LineTrack_Stop();
+
+    if (profile == 0) {
+        T3Task_Stop();
+        return;
+    }
+
+    ControlState_Set(CONTROL_STATIC_BALL);
+
+    t3.active = true;
+    t3.phase = T3_PHASE_TUNE_HOLD;
+    t3.arrival_ticks = 0U;
+    t3.vision_sample_pending = false;
+    t3.has_vision_seq = false;
+    t3.stability_active = false;
+    t3.capture_profile_active = false;
+    t3.final_profile_active = false;
+    clear_final_freeze();
+    target_mm = clamp_target_mm(target_mm);
+    t3.target_mm = target_mm;
+    t3.reference_mm = (float)target_mm;
+    t3.vision_seq = 0U;
+    t3.last_vision_tick = 0U;
+    t3.stability_start_tick = 0U;
+    t3.elapsed_ticks_10ms = 0U;
+
+    if (t3.controller != 0) {
+        BalanceControl_Reset(t3.controller);
+        BalanceControl_SetOutputProfile(t3.controller,
+            profile->negative_delta_limit_us,
+            profile->positive_delta_limit_us,
+            profile->minimum_drive_us);
+        BalanceControl_SetPositionPID(t3.controller,
+            profile->position_kp,
+            profile->position_ki,
+            profile->position_kd);
+        BalanceControl_SetVelocityPID(t3.controller,
+            profile->velocity_kp,
+            profile->velocity_ki,
+            profile->velocity_kd);
+        BalanceControl_Enable(t3.controller, true);
+        BalanceControl_SetReference(t3.controller, t3.reference_mm / 10.0f);
+    }
+}
+
+void T3Task_StartProfileHold(int16_t target_mm, const T3TuneProfile *profile)
+{
+    if (profile == 0) {
+        T3Task_Stop();
+        return;
+    }
+
+    t3.active = true;
+    t3.phase = T3_PHASE_IDLE;
+    t3.arrival_ticks = 0U;
+    t3.vision_sample_pending = false;
+    t3.has_vision_seq = false;
+    t3.stability_active = false;
+    t3.capture_profile_active = false;
+    t3.final_profile_active = false;
+    clear_final_freeze();
+    target_mm = clamp_target_mm(target_mm);
+    t3.target_mm = target_mm;
+    t3.reference_mm = (float)target_mm;
+    t3.vision_seq = 0U;
+    t3.last_vision_tick = 0U;
+    t3.stability_start_tick = 0U;
+    t3.elapsed_ticks_10ms = 0U;
+
+    if (t3.controller != 0) {
+        BalanceControl_Reset(t3.controller);
+        BalanceControl_SetOutputProfile(t3.controller,
+            profile->negative_delta_limit_us,
+            profile->positive_delta_limit_us,
+            profile->minimum_drive_us);
+        BalanceControl_SetPositionPID(t3.controller,
+            profile->position_kp,
+            profile->position_ki,
+            profile->position_kd);
+        BalanceControl_SetVelocityPID(t3.controller,
+            profile->velocity_kp,
+            profile->velocity_ki,
+            profile->velocity_kd);
+        BalanceControl_Enable(t3.controller, true);
+        BalanceControl_SetReference(t3.controller, t3.reference_mm / 10.0f);
+    }
+}
+
+void T3Task_SetCenterOutputProfile(uint16_t negative_limit_us,
+                                   uint16_t positive_limit_us,
+                                   uint16_t minimum_drive_us)
+{
+    if (t3.controller == 0) {
+        return;
+    }
+
+    BalanceControl_SetOutputProfile(t3.controller,
+        negative_limit_us,
+        positive_limit_us,
+        minimum_drive_us);
 }
 
 void T3Task_StartTargetHold(int16_t target_mm)

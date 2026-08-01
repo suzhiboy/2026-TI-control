@@ -164,14 +164,20 @@ void BalanceControl_Init(BalanceControl_t *bc)
     bc->x_ref          = 0.0f;
     bc->a_car          = 0.0f;
 
-    /* --- 位置 PD --- */
+    /* --- 位置 PID --- */
     bc->pos_kp         = BC_DEFAULT_POS_KP;
+    bc->pos_ki         = BC_DEFAULT_POS_KI;
     bc->pos_kd         = BC_DEFAULT_POS_KD;
+    bc->pos_integral   = 0.0f;
     bc->a_base         = 0.0f;
     bc->pos_out_max    = BC_ACCEL_MAX_MS2;
 
     /* --- 速度内环 --- */
     bc->vel_kp         = BC_DEFAULT_VEL_KP;
+    bc->vel_ki         = BC_DEFAULT_VEL_KI;
+    bc->vel_kd         = BC_DEFAULT_VEL_KD;
+    bc->vel_integral   = 0.0f;
+    bc->vel_prev_error = 0.0f;
     bc->a_des          = 0.0f;
 
     /* --- 倾角 --- */
@@ -276,9 +282,15 @@ void BalanceControl_SetRawPositionTimed(BalanceControl_t *bc, float x_raw_cm,
 
 void BalanceControl_SetReference(BalanceControl_t *bc, float x_ref_cm)
 {
+    float next_ref;
+
     if (bc_unlikely(bc == NULL)) return;
 
-    bc->x_ref = fclamp(x_ref_cm, BC_POS_MIN_CM, BC_POS_MAX_CM);
+    next_ref = fclamp(x_ref_cm, BC_POS_MIN_CM, BC_POS_MAX_CM);
+    if (fabsf_(next_ref - bc->x_ref) > BC_POS_INTEGRAL_DEADBAND_CM) {
+        BalanceControl_ClearPidState(bc);
+    }
+    bc->x_ref = next_ref;
 }
 
 void BalanceControl_SetCarAccel(BalanceControl_t *bc, float a_car_ms2)
@@ -291,17 +303,45 @@ void BalanceControl_SetCarAccel(BalanceControl_t *bc, float a_car_ms2)
 
 void BalanceControl_SetPositionPD(BalanceControl_t *bc, float kp, float kd)
 {
+    BalanceControl_SetPositionPID(bc, kp, 0.0f, kd);
+}
+
+void BalanceControl_SetPositionPID(BalanceControl_t *bc, float kp, float ki, float kd)
+{
     if (bc_unlikely(bc == NULL)) return;
 
     bc->pos_kp = (kp >= 0.0f) ? kp : 0.0f;
+    bc->pos_ki = (ki >= 0.0f) ? ki : 0.0f;
     bc->pos_kd = (kd >= 0.0f) ? kd : 0.0f;
+    bc->pos_integral = fclamp(bc->pos_integral,
+                              -BC_POS_INTEGRAL_LIMIT_CM_S,
+                              BC_POS_INTEGRAL_LIMIT_CM_S);
 }
 
 void BalanceControl_SetVelocityP(BalanceControl_t *bc, float kp)
 {
+    BalanceControl_SetVelocityPID(bc, kp, 0.0f, 0.0f);
+}
+
+void BalanceControl_SetVelocityPID(BalanceControl_t *bc, float kp, float ki, float kd)
+{
     if (bc_unlikely(bc == NULL)) return;
 
     bc->vel_kp = (kp >= 0.0f) ? kp : 0.0f;
+    bc->vel_ki = (ki >= 0.0f) ? ki : 0.0f;
+    bc->vel_kd = (kd >= 0.0f) ? kd : 0.0f;
+    bc->vel_integral = fclamp(bc->vel_integral,
+                              -BC_VEL_INTEGRAL_LIMIT_CM,
+                              BC_VEL_INTEGRAL_LIMIT_CM);
+}
+
+void BalanceControl_ClearPidState(BalanceControl_t *bc)
+{
+    if (bc_unlikely(bc == NULL)) return;
+
+    bc->pos_integral = 0.0f;
+    bc->vel_integral = 0.0f;
+    bc->vel_prev_error = 0.0f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -387,6 +427,7 @@ void BalanceControl_Reset(BalanceControl_t *bc)
     bc->x_raw_updated = false;
     bc->pwm_override_enabled = false;
     bc->pwm_override_pulse_us = (uint16_t)(bc->pwm_neutral + 0.5f);
+    BalanceControl_ClearPidState(bc);
     bc->a_base        = 0.0f;
     bc->a_des         = 0.0f;
     bc->theta_raw     = 0.0f;
@@ -458,21 +499,30 @@ void BalanceControl_Run(BalanceControl_t *bc)
     bc->x_pos = x_pos_filt;
 
     /* ---------------------------------------------------------------- *
-     *  Step 2 — 位置外环: PD 控制 → a_base
+     *  Step 2 — 位置外环: PID 控制 → a_base
      *
      *  注意: 微分项直接作用于 -v (而非位置误差的差分), 优点:
      *    - 参考跳变 (x_ref 阶跃) 时不产生微分爆冲
      *    - 量化噪声不被二次放大
      *  这等价于 ITAE 标准型中的"微分先行"结构.
      *
-     *  公式: a_base = Kp · (x_ref - x_pos) - Kd · x_vel
+     *  公式: a_base = Kp · (x_ref - x_pred) + Ki · ∫e dt - Kd · x_vel
      * ---------------------------------------------------------------- */
     {
         float predicted_pos = bc->x_pos +
                               bc->x_vel * BC_POSITION_LOOKAHEAD_S;
+        float pos_error;
         predicted_pos = fclamp(predicted_pos,
                                BC_POS_MIN_CM, BC_POS_MAX_CM);
-        bc->a_base = bc->pos_kp * (bc->x_ref - predicted_pos)
+        pos_error = bc->x_ref - predicted_pos;
+        if (fabsf_(pos_error) > BC_POS_INTEGRAL_DEADBAND_CM) {
+            bc->pos_integral += pos_error * BC_DT_S;
+            bc->pos_integral = fclamp(bc->pos_integral,
+                                      -BC_POS_INTEGRAL_LIMIT_CM_S,
+                                      BC_POS_INTEGRAL_LIMIT_CM_S);
+        }
+        bc->a_base = bc->pos_kp * pos_error
+                   + bc->pos_ki * bc->pos_integral
                    - bc->pos_kd * bc->x_vel;
     }
 
@@ -480,22 +530,34 @@ void BalanceControl_Run(BalanceControl_t *bc)
     bc->a_base = fclamp(bc->a_base, -bc->pos_out_max, bc->pos_out_max);
 
     /* ---------------------------------------------------------------- *
-     *  Step 3 — 速度内环: P 控制
+     *  Step 3 — 速度内环: PID 控制
      *
-     *  在经过位置 PD 输出的 a_base 基础上, 叠加额外速度阻尼:
-     *     a_des = a_base - Kp_vel · v
-     *
-     *  之所以不用 PI 结构, 是因为:
-     *    - 积分项在位置外环已通过 Kp 隐含存在 (位置误差累积)
-     *    - 速度环 I 会造成响应迟滞和 windup
-     *    - 纯 P 阻尼已足够抑制震荡
+     *  以零速度为目标, 在位置环 a_base 基础上叠加速度刹车:
+     *     vel_error = -v
+     *     a_des = a_base + Kp_vel·vel_error
+     *                    + Ki_vel·∫vel_error dt
+     *                    + Kd_vel·d(vel_error)/dt
      *
      *  与 Kd_pos 的协同:
      *    - Kd_pos: 快速抑制位置误差变化率 (减小超调)
      *    - Kp_vel: 直接给速度"刹车" (抑制持续震荡)
      *    - 调参时: 先定 Kp_pos 保证响应, Kp_vel 消除震荡, Kd_pos 微调
      * ---------------------------------------------------------------- */
-    bc->a_des = bc->a_base - bc->vel_kp * bc->x_vel;
+    {
+        float vel_error = -bc->x_vel;
+        float vel_derivative = (vel_error - bc->vel_prev_error) / BC_DT_S;
+        if (fabsf_(vel_error) > BC_VEL_INTEGRAL_DEADBAND_CM_S) {
+            bc->vel_integral += vel_error * BC_DT_S;
+            bc->vel_integral = fclamp(bc->vel_integral,
+                                      -BC_VEL_INTEGRAL_LIMIT_CM,
+                                      BC_VEL_INTEGRAL_LIMIT_CM);
+        }
+        bc->vel_prev_error = vel_error;
+        bc->a_des = bc->a_base
+                  + bc->vel_kp * vel_error
+                  + bc->vel_ki * bc->vel_integral
+                  + bc->vel_kd * vel_derivative;
+    }
 
     /* 二次限幅 (内环可能使信号放大) */
     bc->a_des = fclamp(bc->a_des, -bc->pos_out_max, bc->pos_out_max);

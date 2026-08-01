@@ -44,24 +44,16 @@
 #include "t3_task.h"
 
 #ifndef APP_AUTO_START_TASK
-#define APP_AUTO_START_TASK  TASK_T2
+#define APP_AUTO_START_TASK  0
 #endif
 
 #define APP_OLED_PERIOD_TICKS      (25U)
-#define T4_CAR_ACCEL_FF_GAIN       (1.0f)
-#define T4_CAR_ACCEL_FF_LIMIT_MS2  (0.85f)
-#define T4_CAR_ACCEL_HOLD_MS2      (2.5f)
-#define T4_CAR_ACCEL_START_HOLD_TICKS (150U)
-#define T4_CAR_ACCEL_STOP_HOLD_TICKS  (210U)
-#define T4_CAR_ACCEL_EDGE_DEADBAND_MS2 (0.05f)
-#define T5_CAR_ACCEL_FF_GAIN       (2.0f)
-#define T5_CAR_ACCEL_FF_SIGN       (1.0f)
+#define T4_CAR_ACCEL_FF_GAIN       (1.45f)
+#define T4_CAR_ACCEL_FF_LIMIT_MS2  (1.20f)
+#define T5_CAR_ACCEL_FF_GAIN       (1.45f)
+#define T5_CAR_ACCEL_FF_SIGN       (-1.0f)
 #define T5_CAR_ACCEL_FF_LIMIT_MS2  (1.20f)
-#define T5_CAR_ACCEL_HOLD_MS2      (1.10f)
-#define T5_CAR_ACCEL_START_HOLD_TICKS (180U)
-#define T5_CAR_ACCEL_STOP_HOLD_TICKS  (240U)
-#define T5_CAR_ACCEL_EDGE_DEADBAND_MS2 (0.04f)
-#define T5_CURVE_ACCEL_FF_GAIN     (0.06f)
+#define T5_CURVE_ACCEL_FF_GAIN     (0.0f)
 #define T5_CURVE_ACCEL_FF_LIMIT_MS2 (0.45f)
 
 static volatile uint32_t control_ticks_10ms = 0;
@@ -71,14 +63,6 @@ static bool g_pd42s1_pwm_running = false;
 static uint16_t last_vision_seq = 0U;
 static uint32_t last_vision_tick = 0U;
 static bool has_vision_seq = false;
-static bool t4_ff_session_active = false;
-static uint16_t t4_start_hold_ticks = 0U;
-static uint16_t t4_stop_hold_ticks = 0U;
-static float t4_prev_line_accel_ms2 = 0.0f;
-static bool t5_ff_session_active = false;
-static uint16_t t5_start_hold_ticks = 0U;
-static uint16_t t5_stop_hold_ticks = 0U;
-static float t5_prev_line_accel_ms2 = 0.0f;
 static MT6701_Data mt6701;
 
 static uint16_t slew_u16_toward(uint16_t current, uint16_t target, uint16_t step)
@@ -107,63 +91,20 @@ static float clamp_float(float value, float min_value, float max_value)
     return value;
 }
 
-static void T4_ResetCarAccelFeedforward(void)
-{
-    t4_ff_session_active = false;
-    t4_start_hold_ticks = 0U;
-    t4_stop_hold_ticks = 0U;
-    t4_prev_line_accel_ms2 = 0.0f;
-}
-
 static float T4_BuildCarAccelFeedforward(void)
 {
     float line_accel_ms2 = LineTrack_GetLongitudinalAccelMS2();
     float accel_ms2;
 
     if (KeyMenu_GetTaskID() != TASK_T4) {
-        T4_ResetCarAccelFeedforward();
         return 0.0f;
     }
 
-    if (!t4_ff_session_active) {
-        t4_ff_session_active = true;
-        t4_start_hold_ticks = T4_CAR_ACCEL_START_HOLD_TICKS;
-        t4_stop_hold_ticks = 0U;
-        t4_prev_line_accel_ms2 = 0.0f;
-    }
-
-    if ((line_accel_ms2 > T4_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
-        (t4_prev_line_accel_ms2 <= T4_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
-        t4_start_hold_ticks = T4_CAR_ACCEL_START_HOLD_TICKS;
-    }
-    if ((line_accel_ms2 < -T4_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
-        (t4_prev_line_accel_ms2 >= -T4_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
-        t4_stop_hold_ticks = T4_CAR_ACCEL_STOP_HOLD_TICKS;
-    }
-
-    t4_prev_line_accel_ms2 = line_accel_ms2;
-
-    accel_ms2 = line_accel_ms2 * T4_CAR_ACCEL_FF_GAIN;
-    if (t4_start_hold_ticks > 0U) {
-        accel_ms2 += T4_CAR_ACCEL_HOLD_MS2;
-        t4_start_hold_ticks--;
-    }
-    if (t4_stop_hold_ticks > 0U) {
-        accel_ms2 -= T4_CAR_ACCEL_HOLD_MS2;
-        t4_stop_hold_ticks--;
-    }
+    accel_ms2 = -line_accel_ms2 * T4_CAR_ACCEL_FF_GAIN;
 
     return clamp_float(accel_ms2,
                        -T4_CAR_ACCEL_FF_LIMIT_MS2,
                        T4_CAR_ACCEL_FF_LIMIT_MS2);
-}
-
-static void T5_ResetCarAccelFeedforward(void)
-{
-    t5_ff_session_active = false;
-    t5_start_hold_ticks = 0U;
-    t5_stop_hold_ticks = 0U;
-    t5_prev_line_accel_ms2 = 0.0f;
 }
 
 static float T5_BuildCarAccelFeedforward(void)
@@ -173,41 +114,14 @@ static float T5_BuildCarAccelFeedforward(void)
     float accel_ms2;
 
     if (KeyMenu_GetTaskID() != TASK_T5) {
-        T5_ResetCarAccelFeedforward();
         return 0.0f;
     }
-
-    if (!t5_ff_session_active) {
-        t5_ff_session_active = true;
-        t5_start_hold_ticks = T5_CAR_ACCEL_START_HOLD_TICKS;
-        t5_stop_hold_ticks = 0U;
-        t5_prev_line_accel_ms2 = 0.0f;
-    }
-
-    if ((line_accel_ms2 > T5_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
-        (t5_prev_line_accel_ms2 <= T5_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
-        t5_start_hold_ticks = T5_CAR_ACCEL_START_HOLD_TICKS;
-    }
-    if ((line_accel_ms2 < -T5_CAR_ACCEL_EDGE_DEADBAND_MS2) &&
-        (t5_prev_line_accel_ms2 >= -T5_CAR_ACCEL_EDGE_DEADBAND_MS2)) {
-        t5_stop_hold_ticks = T5_CAR_ACCEL_STOP_HOLD_TICKS;
-    }
-
-    t5_prev_line_accel_ms2 = line_accel_ms2;
 
     curve_accel_ms2 = clamp_float(curve_accel_ms2,
                                   -T5_CURVE_ACCEL_FF_LIMIT_MS2,
                                   T5_CURVE_ACCEL_FF_LIMIT_MS2);
     accel_ms2 = T5_CAR_ACCEL_FF_SIGN *
         ((line_accel_ms2 * T5_CAR_ACCEL_FF_GAIN) + curve_accel_ms2);
-    if (t5_start_hold_ticks > 0U) {
-        accel_ms2 += T5_CAR_ACCEL_FF_SIGN * T5_CAR_ACCEL_HOLD_MS2;
-        t5_start_hold_ticks--;
-    }
-    if (t5_stop_hold_ticks > 0U) {
-        accel_ms2 -= T5_CAR_ACCEL_FF_SIGN * T5_CAR_ACCEL_HOLD_MS2;
-        t5_stop_hold_ticks--;
-    }
 
     return clamp_float(accel_ms2,
                        -T5_CAR_ACCEL_FF_LIMIT_MS2,
@@ -252,6 +166,7 @@ int main(void)
     BalanceControl_Init(&bc);
     BalanceControl_SetReference(&bc, 0.0f);
     T3Task_AttachController(&bc);
+    Vofa_AttachBalanceControl(&bc);
 
     OLED_Init();
     OLED_Clear();
@@ -351,24 +266,18 @@ void TIMER_0_INST_IRQHandler(void)
 
             switch (g_control_state) {
                 case CONTROL_IDLE:
-                    T4_ResetCarAccelFeedforward();
-                    T5_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Stop();
                     PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_TRACK_ONLY:
-                    T4_ResetCarAccelFeedforward();
-                    T5_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Loop_10ms();
                     PD42S1_SoftLockCenter();
                     break;
 
                 case CONTROL_STATIC_BALL:
-                    T4_ResetCarAccelFeedforward();
-                    T5_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, 0.0f);
                     LineTrack_Stop();
                     need_balance = true;
@@ -380,8 +289,6 @@ void TIMER_0_INST_IRQHandler(void)
                     break;
 
                 default:
-                    T4_ResetCarAccelFeedforward();
-                    T5_ResetCarAccelFeedforward();
                     LineTrack_Stop();
                     PD42S1_SoftLockCenter();
                     break;
@@ -389,14 +296,10 @@ void TIMER_0_INST_IRQHandler(void)
 
             if (need_balance) {
                 if (KeyMenu_GetTaskID() == TASK_T4) {
-                    T5_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, T4_BuildCarAccelFeedforward());
                 } else if (KeyMenu_GetTaskID() == TASK_T5) {
-                    T4_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, T5_BuildCarAccelFeedforward());
                 } else {
-                    T4_ResetCarAccelFeedforward();
-                    T5_ResetCarAccelFeedforward();
                     BalanceControl_SetCarAccel(&bc, 0.0f);
                 }
                 if (g_vision_ball.valid) {

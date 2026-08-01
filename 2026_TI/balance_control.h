@@ -71,14 +71,14 @@ extern "C" {
 /* PD42S1 步进电机 PWM 约束 */
 #define BC_PWM_MIN_US               (500U)          /* 最小脉宽        µs   */
 #define BC_PWM_MAX_US               (2500U)         /* 最大脉宽        µs   */
-#define BC_PWM_CENTER_US            (1500U)         /* 中位 (θ=0)     µs   */
+#define BC_PWM_CENTER_US            (1420U)         /* 中位 (θ=0)     µs   */
 #define BC_PWM_RANGE_US             (1000U)         /* 单侧范围        µs   */
 #define BC_PWM_PERIOD_US            (20000U)        /* 50 Hz 周期      µs   */
 #define BC_PWM_NEGATIVE_DELTA_LIMIT_US (130U)
 #define BC_PWM_POSITIVE_DELTA_LIMIT_US (250U)
 #define BC_PWM_MIN_DRIVE_US         (130U)
-#define BC_PWM_SLEW_LIMIT_US         (15U)
-#define BC_PWM_REVERSE_SLEW_LIMIT_US (80U)
+#define BC_PWM_SLEW_LIMIT_US         (45U)
+#define BC_PWM_REVERSE_SLEW_LIMIT_US (120U)
 #define BC_PWM_DIRECTION_SIGN       (1.0f)
 #define BC_RAD_TO_PWM_SCALE_DEFAULT (10000.0f)
 #define BC_MIN_DRIVE_ERROR_CM       (1.5f)
@@ -90,9 +90,16 @@ extern "C" {
 
 /* 默认 PID 参数 (需现场整定) */
 #define BC_DEFAULT_POS_KP           (0.12f)         /* 位置外环 比例增益    */
+#define BC_DEFAULT_POS_KI           (0.0f)          /* 位置外环 积分增益    */
 #define BC_DEFAULT_POS_KD           (0.018f)        /* 位置外环 微分增益    */
 #define BC_DEFAULT_VEL_KP           (0.006f)        /* 速度内环 比例增益    */
+#define BC_DEFAULT_VEL_KI           (0.0f)          /* 速度内环 积分增益    */
+#define BC_DEFAULT_VEL_KD           (0.0f)          /* 速度内环 微分增益    */
 #define BC_POSITION_LOOKAHEAD_S      (0.20f)
+#define BC_POS_INTEGRAL_LIMIT_CM_S   (25.0f)
+#define BC_VEL_INTEGRAL_LIMIT_CM     (40.0f)
+#define BC_POS_INTEGRAL_DEADBAND_CM  (0.15f)
+#define BC_VEL_INTEGRAL_DEADBAND_CM_S (0.8f)
 
 /* 低通滤波器系数 (100 Hz 采样) */
 #define BC_LPF_ALPHA_POS            (0.20f)         /* 位置 LPF 系数        */
@@ -126,14 +133,20 @@ typedef struct {
     float        x_ref;             /* 目标位置        cm                  */
     float        a_car;             /* 小车纵向加速度  m/s²  (向前为正)    */
 
-    /* ---------- 位置外环 PD ---------- */
+    /* ---------- 位置外环 PID ---------- */
     float        pos_kp;            /* 比例增益                            */
+    float        pos_ki;            /* 积分增益                            */
     float        pos_kd;            /* 微分增益 (作用于速度, 抑制超调)     */
+    float        pos_integral;      /* 位置误差积分 cm*s                  */
     float        a_base;            /* PD 输出的基础期望加速度  m/s²       */
     float        pos_out_max;       /* 加速度输出限幅  m/s²                */
 
-    /* ---------- 速度内环 P (额外速度阻尼) ---------- */
+    /* ---------- 速度内环 PID (额外速度阻尼) ---------- */
     float        vel_kp;            /* 速度阻尼增益                        */
+    float        vel_ki;            /* 速度积分增益                        */
+    float        vel_kd;            /* 速度微分增益                        */
+    float        vel_integral;      /* 速度误差积分 cm                     */
+    float        vel_prev_error;    /* 上一拍速度误差 cm/s                */
     float        a_des;             /* 经内环修正后的最终期望加速度 m/s²   */
 
     /* ---------- 倾角计算 ---------- */
@@ -215,11 +228,14 @@ void BalanceControl_SetCarAccel(BalanceControl_t *bc, float a_car_ms2);
  * @brief  设置位置外环 PD 参数
  */
 void BalanceControl_SetPositionPD(BalanceControl_t *bc, float kp, float kd);
+void BalanceControl_SetPositionPID(BalanceControl_t *bc, float kp, float ki, float kd);
 
 /**
  * @brief  设置速度内环 P 参数
  */
 void BalanceControl_SetVelocityP(BalanceControl_t *bc, float kp);
+void BalanceControl_SetVelocityPID(BalanceControl_t *bc, float kp, float ki, float kd);
+void BalanceControl_ClearPidState(BalanceControl_t *bc);
 
 /**
  * @brief  标定 PWM 中位 (水管水平时调用, 记录当前 PWM 为零位)
